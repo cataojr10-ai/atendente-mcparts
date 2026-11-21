@@ -1,0 +1,26 @@
+# Configuração do worker atendente-mcparts (igual à que está no Cloudflare em 21/11/2026).
+# Os segredos (ANTHROPIC_API_KEY, ZAPI_*, PAINEL_SENHA, WEBHOOK_SEGREDO, PONTE_CHAVE, OMNI_*)
+# ficam só no Cloudflare e NÃO vão para este repositório.
+name = "atendente-mcparts"
+main = "src/worker.js"
+compatibility_date = "2026-10-18"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "painel-mcparts"
+database_id = "e39d5949-0679-4fb7-b650-5e5559605b15"
+
+[[kv_namespaces]]
+binding = "MEMORIA"
+id = "7260ab8500fb45e3b6977c02081026b9"
+
+[[services]]
+binding = "PONTE"
+service = "ponte-mcparts"
+
+[observability]
+enabled = true
