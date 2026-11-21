@@ -245,7 +245,13 @@ async function buscarEstoque(busca, tipo, env) {
     const partes = ctx.split(/\n|,|;|\/| E (?=[A-Z])/).map((s) => s.trim()).filter(Boolean);
     if (partes.length > 1 && mods.length) { const sel = partes.filter((p) => mods.some((m) => p.split(/[^A-Z0-9]+/).includes(m))); if (sel.length) ctx = sel.join(" \n "); } }
   // "doc"/"dock"/"conector" de carga e o conector
-  if (/(^| )(DOC|DOCK|DOCS|CONECTOR)( |$)/.test(normalizar(busca))) { tipo = "conector"; busca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|DE|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca; }
+  if (/(^| )(DOC|DOCK|DOCS|CONECTOR)( |$)/.test(normalizar(busca))) {
+    tipo = "conector";
+    const semPeca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|DE|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
+    // "tem conector de carga?" sem modelo: pergunta o modelo em vez de dizer que nao tem
+    if (!semPeca.split(" ").some((w) => w && !SEM_PECA.has(w) && !IGNORAR.has(w))) return { perguntar: true, mensagem: "O cliente não disse o modelo. Não diga que não temos: pergunte qual é o modelo do celular." };
+    busca = semPeca;
+  }
   // "bateria" / "tela da bateria": procura bateria (so procura tela se pediu tela de verdade)
   { const semTB = ctx.replace(/(TELA|DISPLAY) (DA|DE|DO) BATERIA/g, "BATERIA");
     if (/(^| )BATERIA/.test(semTB) && !/(^| )(TELA|DISPLAY|FRONTAL|LCD)( |$)/.test(semTB) && (!tipo || /TELA|TODOS|DISPLAY|FRONTAL/.test(normalizar(tipo)))) { tipo = "bateria"; busca = normalizar(busca).replace(/(^| )(TELA|DISPLAY|FRONTAL|LCD|BATERIA|DA|DE|DO)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca; } }
@@ -286,6 +292,24 @@ async function buscarEstoque(busca, tipo, env) {
       while (fim >= 0 && fim + 1 < tk.length && VR.includes(tk[fim + 1])) fim++;
       const b3 = fim >= 0 ? tk.slice(0, fim + 1).join(" ") : "";
       if (b3 && b3 !== normalizar(busca)) { const j3 = await consultaPonte(b3); if (j3.disponivel) j = j3; }
+    }
+    // cadastro com modelo grudado: "NOTE 60" -> "NOTE60"
+    if (!j.disponivel && /(^| )[A-Z]{2,6} \d+[A-Z]?( |$)/.test(normalizar(busca))) { const b6 = normalizar(busca).replace(/(^| )([A-Z]{2,6}) (\d+[A-Z]?)(?= |$)/g, "$1$2$3"); try { const j6 = await consultaPonte(b6); if (j6.disponivel) j = j6; } catch (e) {} }
+    // cadastro sem a marca: "CAMERA TRASEIRA 12 PRO MAX" (sem IPHONE). So aceita item sem outra marca no nome
+    if (!j.disponivel && /(^| )IPHONE \d/.test(normalizar(busca))) {
+      const b7 = normalizar(busca).replace(/(^| )IPHONE(?= )/g, " ").replace(/\s+/g, " ").trim();
+      try {
+        const j7 = await consultaPonte(b7);
+        const outraMarca = /(^|[^A-Z])(SAM|SAMSUNG|MOTO|MOTOROLA|XIAOMI|REDMI|POCO|REALME|OPPO|LG|INFINIX|ASUS|NOKIA|TECNO|ITEL|VIVO|HUAWEI|LENOVO|ZTE)([^A-Z]|$)/;
+        const ok = (j7.opcoes || []).filter((o) => !outraMarca.test(normalizar(o)));
+        if (j7.disponivel && ok.length) { j = j7; j.opcoes = ok; }
+      } catch (e) {}
+    }
+    // pediu tela: nao manda flex/camera/lente que so tem "FRONTAL" no nome (ex.: FLEX CAMERA FRONTAL)
+    if (normalizar(tipo) === "TELA" && Array.isArray(j.opcoes)) {
+      const naoTela = (o) => /(^|[^A-Z])(FLEX|CAMERA|LENTE|SENSOR|AURICULAR)([^A-Z]|$)/.test(normalizar(o));
+      const f = j.opcoes.filter((o) => !naoTela(o));
+      if (f.length) j.opcoes = f;
     }
     // pediu lente: so serve lente (nao manda a camera inteira)
     if (/(^| )LENTE/.test(ctx) && Array.isArray(j.opcoes)) {
