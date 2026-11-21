@@ -577,8 +577,9 @@ const ESPERA_MS = 12000; // junta mensagens seguidas do cliente numa resposta so
 
 // Assuntos que vao direto para o atendente (pedido, troca, defeito, entrega)
 const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGOU|APAGADA|APAGADO|QUEIMOU|QUEIMADA|QUEIMADO|NAO LIGA|NAO GERA|ERRADA|ERRADO|MANDOU|MANDARAM|ENVIOU|SAIU|CHEGOU|CADE|AGUARDO|JA FOI|FERIADO|VAI ABRIR|VAO ABRIR|VAI FUNCIONAR|VAO FUNCIONAR|VAO ATENDER|VAI ATENDER|AMANHA (VOCES |VCS |VC )?(ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|AMANHA)( E [A-Z]+)? (ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|NAO QUERO IA|ESSA IA|ESSE ROBO|ROBO|ROBOZINHO|FALAR COM ATENDENTE|FALAR COM ALGUEM|FALAR COM UMA PESSOA|ATENDENTE HUMANO|PESSOA DE VERDADE|DESATIVA|PIX|CHAVE PIX|QUAL CHAVE|QUAL A CHAVE|COMPROVANTE|PAGUEI|PAGAR|PAGAMENTO|BOLETO|DEVENDO|DEVO)([^A-Z]|$)/;
-// A loja nao vende capinha nem pelicula
-const CAPA_PELICULA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS|PELICULA|PELICULAS)([^A-Z]|$)/;
+// A loja nao vende capinha; pelicula vende junto com a tela (o atendente confere o modelo)
+const CAPINHA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS)([^A-Z]|$)/;
+const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
 // Duvida tecnica sobre a peca: so o atendente sabe responder (a IA so repetia a lista)
 const DUVIDA_PECA = /(^|[^A-Z])(MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
 // Pedido: o robo confirma a peca escolhida (com o modelo) e passa para o atendente com a bolinha
@@ -852,10 +853,15 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
       await registrar(env, tel, "robo", ab);
       return;
     } }
-  // Capinha / pelicula sozinha: a loja nao vende, responde direto (pedido de tela "com pelicula" segue o fluxo normal)
-  if (!ehPedido && CAPA_PELICULA.test(junto) && !/(^|[^A-Z])(TELA|DISPLAY|FRONTAL|LCD|BATERIA|DOCK|DOC|CONECTOR|TAMPA)([^A-Z]|$)/.test(junto)) {
+  // Pelicula: a loja vende junto com a tela e precisa ver se tem do modelo -> atendente
+  if (!ehPedido && PELICULA.test(junto)) {
     await env.MEMORIA.delete("pend:" + tel);
-    const resp = "Não trabalhamos com capinha nem película, só com peças (telas, baterias, docks, tampas...). Se precisar de alguma peça, é só me falar o modelo 😊";
+    await passarParaHumano(env, tel, textoTodo, enviar); return;
+  }
+  // Capinha: a loja nao vende, responde direto
+  if (!ehPedido && CAPINHA.test(junto) && !/(^|[^A-Z])(TELA|DISPLAY|FRONTAL|LCD|BATERIA|DOCK|DOC|CONECTOR|TAMPA)([^A-Z]|$)/.test(junto)) {
+    await env.MEMORIA.delete("pend:" + tel);
+    const resp = "Não trabalhamos com capinha, só com peças (telas, baterias, docks, tampas...). Se precisar de alguma peça, é só me falar o modelo 😊";
     const hc = await lerHistorico(env, tel);
     hc.push({ role: "user", content: textoTodo }, { role: "assistant", content: resp });
     await salvarHistorico(env, tel, hc);
