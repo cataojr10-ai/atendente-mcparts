@@ -762,8 +762,24 @@ function foraDoHorarioLoja(agora = new Date()) {
   return min < 9 * 60 || min >= 18 * 60;
 }
 
-async function passarParaHumano(env, tel, textoCliente, enviar) {
-  const resp = foraDoHorarioLoja() ? "Recebemos sua mensagem! Assim que abrirmos, já te respondemos 😊" : "Ok";
+// Comprovante de pagamento: agradece em vez do "Ok" (o atendente ainda confere, com a bolinha)
+const MSG_COMPROVANTE = "Recebemos seu comprovante! Muito obrigado por ser nosso cliente 🙏 Já vamos conferir.";
+const FALA_COMPROVANTE = /(^|[^A-Z])(SEGUE O COMPROVANTE|SEGUE COMPROVANTE|COMPROVANTE (DE PAGAMENTO|DO PIX|ENVIADO|ANEXO|ANEXADO|AI|AQUI)|ESTA O COMPROVANTE|TA O COMPROVANTE|MANDEI O COMPROVANTE|PAGUEI|PAGO|PIX (FEITO|ENVIADO|PAGO|REALIZADO)|FIZ O PIX|FIZ PIX|MANDEI O PIX|SEGUE O PIX|PGTO|PAGAMENTO (FEITO|REALIZADO|EFETUADO|ENVIADO)|TRANSFERI|TRANSFERENCIA (FEITA|REALIZADA))([^A-Z]|$)/;
+const PEDE_PIX = /(QUAL|ME MANDA|MANDA|ME PASSA|PASSA|CADE|AGUARDO|AGUARDANDO|VOU FAZER|VOU TA FAZENDO|VOU MANDAR)( [A-Z]+){0,2} (PIX|CHAVE|COMPROVANTE)/;
+async function ehComprovante(env, tel, texto, anexo) {
+  const t = normalizar(texto).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ");
+  if (FALA_COMPROVANTE.test(t) && !PEDE_PIX.test(t) && !/\?/.test(texto)) return true;
+  if (!anexo) return false;
+  if (anexo === "documento") return true; // PDF/documento quase sempre e comprovante
+  // foto sem legenda logo depois de conversa de pix/comprovante
+  try {
+    const r = await env.DB.prepare("SELECT texto FROM mensagens WHERE tel = ? AND em > ? ORDER BY em DESC LIMIT 8").bind(tel, Date.now() - 3 * 60 * 60 * 1000).all();
+    return (r.results || []).some((x) => /(^|[^A-Z])(PIX|COMPROVANTE|CHAVE|PAGAMENTO|PAGAR)([^A-Z]|$)/.test(normalizar(x.texto)));
+  } catch (e) { return false; }
+}
+
+async function passarParaHumano(env, tel, textoCliente, enviar, respPronta) {
+  const resp = respPronta || (foraDoHorarioLoja() ? "Recebemos sua mensagem! Assim que abrirmos, já te respondemos 😊" : "Ok");
   const hist = await lerHistorico(env, tel);
   hist.push({ role: "user", content: textoCliente }, { role: "assistant", content: resp });
   await salvarHistorico(env, tel, hist);
@@ -822,7 +838,7 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   const temImg = !!(await env.MEMORIA.get("img:" + tel));
   if (temImg && !ehPedido && !/(TEM|VALOR|QUANTO|PRECO|QTO|QNTO|DISPONIVEL|\?|QUAL|TELA|BATERIA|DOCK|DOC|CONECTOR|TAMPA|LENTE|CAMERA|FLEX|DISPLAY|FRONTAL|PECA)/.test(junto.replace(/\[FOTO\]/g, " "))) {
     await env.MEMORIA.delete("pend:" + tel); await env.MEMORIA.delete("img:" + tel);
-    await passarParaHumano(env, tel, textoTodo, enviar); return;
+    await passarParaHumano(env, tel, textoTodo, enviar, (await ehComprovante(env, tel, textoTodo.replace(/\[foto\]/gi, " "), "foto")) ? MSG_COMPROVANTE : null); return;
   }
   { const ab = respostaAberto(junto);
     if (ab) {
@@ -839,11 +855,11 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
     await env.MEMORIA.delete("pend:" + tel);
     await passarParaHumano(env, tel, textoTodo, enviar); return;
   }
-  if (PARA_HUMANO.test(junto)) {
+  if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto.replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " "))) {
     await env.MEMORIA.delete("pend:" + tel);
     // "manda essa de 130, na troca da outra": e pedido tambem, mostra o modelo
     if (ehPedido && acharPedido(await lerHistorico(env, tel), textoTodo)) { await anotarPedido(env, tel, textoTodo, enviar); return; }
-    await passarParaHumano(env, tel, textoTodo, enviar); return;
+    await passarParaHumano(env, tel, textoTodo, enviar, (await ehComprovante(env, tel, textoTodo)) ? MSG_COMPROVANTE : null); return;
   }
   if (ehPedido) { await env.MEMORIA.delete("pend:" + tel); await anotarPedido(env, tel, textoTodo, enviar); return; }
   const img = await env.MEMORIA.get("img:" + tel);
@@ -928,7 +944,9 @@ async function apagarZapi(env, tel, id) { try { const inst = (String(env.ZAPI_IN
     if (body.audio || body.image || body.video || body.document) {
       await registrar(env, tel, "cliente", body.audio ? "[áudio]" : body.image ? "[imagem]" : body.video ? "[vídeo]" : "[documento]", { nome: body.senderName || body.chatName || "" });
       if (!(await estaPausado(env, tel))) {
-        await enviarZapi(env, tel, "Consegue me mandar por escrito qual peça e modelo você procura? 😊");
+        const cap = String((body.image && body.image.caption) || (body.document && body.document.caption) || "");
+        if (body.document || (body.image && (await ehComprovante(env, tel, cap, "foto")))) await passarParaHumano(env, tel, body.document ? "[documento]" : "[imagem]", enviarZapi, MSG_COMPROVANTE);
+        else await enviarZapi(env, tel, "Consegue me mandar por escrito qual peça e modelo você procura? 😊");
       }
     }
     return;
@@ -1049,7 +1067,8 @@ async function webhookOmni(body, env) {
           await registrar(env, tel, "robo", aviso);
         } else {
           // video, documento (comprovante), arquivo: quem ve e o atendente
-          await passarParaHumano(env, tel, rotulo + (a0.caption ? " " + String(a0.caption) : ""), enviarOmni);
+          const comp = tp === "DOCUMENT" || (tp === "IMAGE" && (await ehComprovante(env, tel, String(a0.caption || ""), "foto")));
+          await passarParaHumano(env, tel, rotulo + (a0.caption ? " " + String(a0.caption) : ""), enviarOmni, comp ? MSG_COMPROVANTE : null);
         }
       }
     }
