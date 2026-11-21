@@ -24,3 +24,12 @@ service = "ponte-mcparts"
 
 [observability]
 enabled = true
+
+# Pré-visualizações (branches de PR). O Workers Builds roda `wrangler preview` fora do main e exige este bloco.
+# A pré-visualização tem URL própria e não recebe o webhook do WhatsApp, então não responde clientes.
+[previews.ai]
+binding = "AI"
+
+[[previews.kv_namespaces]]
+binding = "MEMORIA"
+id = "7260ab8500fb45e3b6977c02081026b9"
