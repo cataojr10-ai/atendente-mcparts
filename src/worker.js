@@ -576,7 +576,7 @@ const PERGUNTA_VALOR = /(^|[^A-Z])(VALOR|VALORES|PRECO|PRECOS|QUANTO|QTO|QNTO|OR
 const ESPERA_MS = 12000; // junta mensagens seguidas do cliente numa resposta so
 
 // Assuntos que vao direto para o atendente (pedido, troca, defeito, entrega)
-const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGOU|APAGADA|APAGADO|QUEIMOU|QUEIMADA|QUEIMADO|NAO LIGA|NAO GERA|ERRADA|ERRADO|MANDOU|MANDARAM|ENVIOU|SAIU|CHEGOU|CADE|AGUARDO|JA FOI|FERIADO|VAI ABRIR|VAO ABRIR|VAI FUNCIONAR|VAO FUNCIONAR|VAO ATENDER|VAI ATENDER|AMANHA (VOCES |VCS |VC )?(ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|AMANHA)( E [A-Z]+)? (ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|NAO QUERO IA|ESSA IA|ESSE ROBO|ROBO|ROBOZINHO|FALAR COM ATENDENTE|FALAR COM ALGUEM|FALAR COM UMA PESSOA|ATENDENTE HUMANO|PESSOA DE VERDADE|DESATIVA|PIX|CHAVE PIX|QUAL CHAVE|QUAL A CHAVE|COMPROVANTE|PAGUEI|PAGAR|PAGAMENTO|BOLETO|DEVENDO|DEVO)([^A-Z]|$)/;
+const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGOU|APAGADA|APAGADO|QUEIMOU|QUEIMADA|QUEIMADO|NAO LIGA|NAO GERA|ERRADA|ERRADO|MANDOU|MANDARAM|ENVIOU|SAIU|CHEGOU|CADE|AGUARDO|JA FOI|FERIADO|VAI ABRIR|VAO ABRIR|VAI FUNCIONAR|VAO FUNCIONAR|VAO ATENDER|VAI ATENDER|AMANHA (VOCES |VCS |VC )?(ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|AMANHA)( E [A-Z]+)? (ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|NAO QUERO IA|ESSA IA|ESSE ROBO|ROBO|ROBOZINHO|FALAR COM ATENDENTE|FALAR COM ALGUEM|FALAR COM UMA PESSOA|ATENDENTE HUMANO|PESSOA DE VERDADE|DESATIVA|PIX|CHAVE PIX|QUAL CHAVE|QUAL A CHAVE|COMPROVANTE|PAGUEI|PAGAR|PAGAMENTO|BOLETO|DEVENDO|DEVO|NAO ME RESPONDEU|NAO RESPONDEU|NAO ME RESPONDE|SEM RESPOSTA|OLHA (AI|AE|DIREITO|DIREITINHO|DE NOVO|NOVAMENTE|MELHOR|BEM)|CONFERE (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|VERIFICA (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|TEM SIM|TINHA SIM)([^A-Z]|$)/;
 // A loja nao vende capinha; pelicula vende junto com a tela (o atendente confere o modelo)
 const CAPINHA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS)([^A-Z]|$)/;
 const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
@@ -917,10 +917,13 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   // 🔴 na frente: na lista do WhatsApp a loja ve quem precisa de resposta humana
   let resp2 = String(resposta || "").replace(/um minuto,? j[áa] te respond[oe]u?\s*😊?/gi, "Ok").replace(/\n{3,}/g, "\n\n").trim() || "Ok";
   resp2 = arrumarPedido(resp2) || "Ok";
-  // "nao temos" igual ao que acabou de mandar: nao repete
+  // "nao temos" igual ao que acabou de mandar: se o cliente pediu outro modelo, responde normal;
+  // se so insistiu ("?", "olha de novo"), chama o atendente (antes ficava calado e o cliente reclamava)
   { const ultN = [...histAntes].reverse().find((m) => m.role === "assistant" && typeof m.content === "string");
     if (!chamouHumano && ultN && /NAO TEMOS/.test(normalizar(resp2)) && normalizar(ultN.content) === normalizar(resp2)) {
-      await salvarHistorico(env, tel, histAntes); return;
+      const antes = normalizar(histAntes.filter((m) => m.role === "user" && typeof m.content === "string").map((m) => m.content).join(" ")).split(/[^A-Z0-9]+/);
+      const novoModelo = junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w) && !antes.includes(w));
+      if (!novoModelo) { await salvarHistorico(env, tel, histAntes); await passarParaHumano(env, tel, textoTodo, enviar); return; }
     } }
   // ia mandar a mesma resposta de antes: o cliente nao ficou satisfeito, chama o atendente
   { const ultR = [...histAntes].reverse().find((m) => m.role === "assistant" && typeof m.content === "string");
