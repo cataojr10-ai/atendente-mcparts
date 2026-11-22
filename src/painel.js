@@ -1,6 +1,8 @@
 // Painel de atendimento da M&C Parts (conversas, fila, pausa do robo, regras)
 // Dados no D1 (binding DB). Senha no segredo PAINEL_SENHA. Endereco: /painel
 
+import { resumoDoDia, resumoEmTexto } from "./resumo.js";
+
 let pronto = false;
 async function preparar(env) {
   if (pronto) return;
@@ -149,6 +151,11 @@ export async function painel(request, env, url, deps) {
     if (rota === "conversas") {
       const r = await env.DB.prepare("SELECT c.tel, c.nome, c.ultima, c.ultima_em, c.nao_lidas, c.aguardando, c.motivo, c.pausa_ate, CASE WHEN b.tel IS NULL THEN 0 ELSE 1 END AS bloqueado FROM conversas c LEFT JOIN bloqueados b ON b.tel = c.tel ORDER BY c.ultima_em DESC LIMIT 200").all();
       return json({ agora, robo_ligado: await roboLigado(env), conversas: r.results || [] });
+    }
+    if (rota === "resumo") {
+      const r = await resumoDoDia(env, url.searchParams.get("dia"));
+      if (url.searchParams.get("formato") === "texto") return new Response(resumoEmTexto(r), { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+      return json(r);
     }
     if (rota === "mensagens") {
       const tel = soNumero(url.searchParams.get("tel"));
