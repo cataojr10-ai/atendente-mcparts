@@ -25,3 +25,7 @@ Tabela `config` do D1 `painel-mcparts`:
 
 - 21/11/2026: commit inicial com o código que estava no ar (versão `edd5e813`), já com as correções de feriado (dias fechados, resposta a "estão abertos?" e aviso com o robô desligado).
 - 21/11/2026: deploy automático ligado (Workers Builds, branch `main`).
+
+## Resumo diário (para a análise gastar menos)
+`GET /painel/api/resumo?dia=AAAA-MM-DD` (cabeçalho `x-senha`, a mesma do painel; `dia` padrão = hoje em Brasília; `&formato=texto` devolve texto corrido).
+Traz só contagens e poucos casos por assunto: sem resposta (marca bloqueados), preço fora do horário, listas sem resposta, insistência após "não temos", passagens 🔴 por motivo, comprovantes, capinha/película, áudios e sinais de erro. Código em `src/resumo.js`.
