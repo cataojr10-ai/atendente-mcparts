@@ -864,6 +864,18 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
       await registrar(env, tel, "robo", ab);
       return;
     } }
+  // So um numero de modelo ("do 12", "e o 12", "12 pro", "tela 13"): pode ser iPhone, Redmi Note, Samsung... pergunta a marca
+  { const resto = junto.replace(/(^|[^A-Z0-9])(E|O|A|DO|DA|DE|TEM|TELA|FRONTAL|DISPLAY|PRO|MAX|PLUS|MINI|VOCE|VC|ME|VE|VER|PRA|PARA|FAVOR|POR|BOM|DIA|BOA|TARDE|NOITE|ENTAO|TBM|TAMBEM|MAS|SO|UM|UMA|TA|ESTA)(?=[^A-Z0-9]|$)/g, " ").replace(/[^A-Z0-9]+/g, " ").trim();
+    if (!ehPedido && /^(\d{1,2})( \1)*$/.test(resto) && parseInt(resto, 10) >= 5 && parseInt(resto, 10) <= 19) {
+      await env.MEMORIA.delete("pend:" + tel);
+      const resp = "Qual o modelo do celular? É iPhone, Xiaomi (Redmi/Note), Samsung ou outra marca? 😊";
+      const hm = await lerHistorico(env, tel);
+      hm.push({ role: "user", content: textoTodo }, { role: "assistant", content: resp });
+      await salvarHistorico(env, tel, hm);
+      await enviar(env, tel, resp);
+      await registrar(env, tel, "robo", resp);
+      return;
+    } }
   // Ferramentas (jogo de chaves, chave de fenda...): a loja nao vende como peca, o atendente decide
   if (!ehPedido && FERRAMENTA.test(junto)) {
     await env.MEMORIA.delete("pend:" + tel); await env.MEMORIA.delete("img:" + tel);
