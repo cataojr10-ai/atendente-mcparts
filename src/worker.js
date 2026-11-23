@@ -336,6 +336,7 @@ async function buscarEstoque(busca, tipo, env) {
     if (filtroAro && Array.isArray(j.opcoes)) {
       const f = j.opcoes.filter((o) => normalizar(o).includes(filtroAro));
       if (f.length) j.opcoes = f;
+      else if (j.opcoes.length) j.observacao = "Não existe versão " + (filtroAro === "S/ARO" ? "SEM ARO" : "COM ARO") + " desse modelo no cadastro. Diga isso ao cliente (ex.: \"Sem aro não temos, só com aro:\") e mostre estas opções exatamente como vieram.";
       else { delete j.opcoes; j.disponivel = false; j.mensagem = "No momento não temos essa peça disponível."; }
     }
     // Cliente pediu uma versao (ex.: EDGE 30 FUSION) e a busca perdeu a palavra: nao manda outro modelo
@@ -701,6 +702,15 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
     else { const cs = candidatosPedido(await lerHistorico(env, tel), textoCliente); resposta = cs.length ? "Pedido anotado! Um atendente já confirma qual delas:\n" + cs.join("\n") : /n[ãa]o temos/i.test(tx) ? tx : "Pedido anotado! Um atendente já confirma 😊"; }
     if (fora && !/abrirmos/i.test(resposta)) resposta += fim;
   }
+  // Pediu varias pecas ("as telas e a bateria") e so uma foi anotada: avisa que o atendente confirma o resto
+  { const nt = normalizar(textoCliente), nr = normalizar(resposta);
+    const rot = [[/TAMPA/, "Tampa"], [/BATERIA/, "Bateria"], [/DOCK/, "Dock de carga"], [/FRONTAL/, "Tela"], [/PELICULA/, "Película"], [/LENTE/, "Lente"], [/CAMERA/, "Câmera"], [/AURICULAR/, "Auricular"]];
+    const falta = PECAS_TXT.filter(([re, alvo]) => re.test(nt) && !alvo.test(nr)).map(([, alvo]) => (rot.find(([k]) => k.source === alvo.source.split("|")[0]) || [0, null])[1]).filter(Boolean);
+    if (falta.length && /PEDIDO ANOTADO/.test(nr)) {
+      const extra = "\nTambém anotei: " + falta.map((x) => "*" + x + "*").join(", ") + " (um atendente confirma qual e o preço)";
+      const k = resposta.indexOf("\n\nAssim que abrirmos");
+      resposta = k >= 0 ? resposta.slice(0, k) + extra + resposta.slice(k) : resposta + extra;
+    } }
   await enviar(env, tel, "🔴 " + resposta);
   await registrar(env, tel, "robo", resposta);
   await pausar(env, tel, "pedido");
