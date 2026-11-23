@@ -195,6 +195,22 @@ export async function painel(request, env, url, deps) {
       }
       return json({ ok: true });
     }
+    if (rota === "religar_tudo" && request.method === "POST") {
+      // Religa tudo de uma vez: chave geral, pausas de todas as conversas e fila "Aguardando você". Nao desbloqueia ninguem.
+      const antes = await roboLigado(env);
+      await gravarConfig(env, "robo_ligado", "1");
+      let pausas = 0;
+      try {
+        const k = await env.DB.prepare("DELETE FROM kv WHERE k LIKE 'pausa:%'").run();
+        pausas = (k.meta && k.meta.changes) || 0;
+      } catch (e) {
+        console.log("religar_tudo kv", e && e.message); // tabela kv ainda nao existe = nao ha pausas
+      }
+      const c = await env.DB.prepare("UPDATE conversas SET aguardando = 0, motivo = '', pausa_ate = 0 WHERE aguardando <> 0 OR pausa_ate <> 0").run();
+      const conversas = (c.meta && c.meta.changes) || 0;
+      console.log("religar_tudo", "robo_antes_ligado=" + antes, "pausas=" + pausas, "conversas=" + conversas);
+      return json({ ok: true, robo_ligado: true, robo_estava_desligado: !antes, pausas, conversas });
+    }
     if (rota === "config") {
       if (request.method === "POST") {
         if (corpo.restaurar) await gravarConfig(env, "regras", null);
@@ -312,7 +328,7 @@ input,textarea{font:inherit;border:1px solid var(--linha);border-radius:8px;padd
 </div>
 <div id="app" hidden>
   <div class="topo"><b>M&amp;C Parts · Atendimento</b>
-    <button id="chave">Robô</button><button id="bRegras">Regras</button><button id="bTreinos">Treinamentos</button><button id="bTeste">Testar robô</button><button id="bSair">Sair</button></div>
+    <button id="chave">Robô</button><button id="bTudo">Religar tudo</button><button id="bRegras">Regras</button><button id="bTreinos">Treinamentos</button><button id="bTeste">Testar robô</button><button id="bSair">Sair</button></div>
   <div class="corpo" id="corpo">
     <div class="lista"><div class="abas"><button id="aTodas" class="sel">Todas</button><button id="aFila">Aguardando você</button></div><div class="itens" id="itens"></div></div>
     <div class="chat">
@@ -433,6 +449,15 @@ $('bBloq').onclick = async function () {
   var a = $('bBloq').dataset.acao;
   if (a === 'bloquear' && !confirm('O robô nunca mais vai responder este cliente. As mensagens dele continuam aparecendo aqui no painel. Bloquear?')) return;
   try { await api('acao', { tel: atual, acao: a }); await carregarLista(); } catch (e) { alertar(e.message); }
+};
+$('bTudo').onclick = async function () {
+  if (!confirm('Religar TUDO de uma vez?\\n\\n- Liga o robô para todos os clientes\\n- Devolve ao robô todas as conversas pausadas ou aguardando você\\n- Quem está bloqueado continua bloqueado\\n\\nIsso afeta todas as conversas. Continuar?')) return;
+  $('bTudo').disabled = true;
+  try {
+    var j = await api('religar_tudo', {}); roboOn = j.robo_ligado; await carregarLista();
+    alert('Pronto. Robô ligado' + (j.robo_estava_desligado ? ' (estava desligado)' : '') + '. ' + j.conversas + ' conversa(s) devolvida(s) ao robô.');
+  } catch (e) { alert(e.message); }
+  $('bTudo').disabled = false;
 };
 $('chave').onclick = async function () {
   if (!confirm(roboOn ? 'Desligar o robô para todos os clientes?' : 'Ligar o robô de novo?')) return;
