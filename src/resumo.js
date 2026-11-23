@@ -87,7 +87,7 @@ export async function resumoDoDia(env, dia) {
       if (x.de === "cliente") {
         // quem respondeu depois (antes da proxima mensagem do cliente)
         let resp = null;
-        for (let j = i + 1; j < L.length && L[j].de !== "cliente"; j++) { resp = L[j]; break; }
+        for (let j = i + 1; j < L.length; j++) { if (L[j].de !== "cliente") { resp = L[j]; break; } if (L[j].em - x.em > 120000) break; } // mensagens seguidas do cliente (ate 2 min): a resposta vale para todas
         const linhas = String(x.texto).split(/\n+/).filter((s) => s.trim()).length;
 
         if (/^\[(ÁUDIO|AUDIO)/i.test(x.texto)) { r.audios.total++; r.audios.nao_entendidos++; }
