@@ -581,6 +581,7 @@ const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGO
 const CAPINHA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS)([^A-Z]|$)/;
 const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
 // Duvida tecnica sobre a peca: so o atendente sabe responder (a IA so repetia a lista)
+const FERRAMENTA = /(^|[^A-Z])(JOGO DE CHAVES?|KIT DE CHAVES?|CHAVES? DE FENDA|CHAVE PHILIPS|FERRAMENTAS?|PINCA|ESTILETE|ALICATE)([^A-Z]|$)/;
 const DUVIDA_PECA = /(^|[^A-Z])(MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
 // Pedido: o robo confirma a peca escolhida (com o modelo) e passa para o atendente com a bolinha
 const PEDIDO = /(^|[^A-Z])(SEPARA|SEPARAR|TRAZ|TRAZER|MANDA|MANDE|ENVIA|ENVIE|PODE MANDAR|PODE TRAZER|PODE SEPARAR|PODE ENVIAR|VOU QUERER|VOU LEVAR|QUERO ESSA|QUERO ESSE|QUERO UMA|QUERO UM|FECHA|FECHADO|VOU FICAR|FICO COM|PODE SER|ESSA MESMO|ESSE MESMO)([^A-Z]|$)/;
@@ -853,6 +854,11 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
       await registrar(env, tel, "robo", ab);
       return;
     } }
+  // Ferramentas (jogo de chaves, chave de fenda...): a loja nao vende como peca, o atendente decide
+  if (!ehPedido && FERRAMENTA.test(junto)) {
+    await env.MEMORIA.delete("pend:" + tel); await env.MEMORIA.delete("img:" + tel);
+    await passarParaHumano(env, tel, textoTodo, enviar); return;
+  }
   // Pelicula: a loja vende junto com a tela e precisa ver se tem do modelo -> atendente
   if (!ehPedido && PELICULA.test(junto)) {
     await env.MEMORIA.delete("pend:" + tel);
