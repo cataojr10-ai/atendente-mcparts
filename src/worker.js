@@ -47,6 +47,8 @@ CONSULTA DE ESTOQUE (REGRA PRINCIPAL)
 - Sempre que o cliente citar qualquer peça, produto, acessório, código ou modelo de celular (ex.: "A12", "tela note 13", "bateria bn46", "auricular iphone 11", "cola branca"), use a ferramenta consultar_estoque ANTES de responder. Nunca diga que não tem sem consultar.
 - Se o cliente mandar só o modelo do celular, entenda que ele quer a tela (tipo "tela").
 - Se o cliente pedir uma peça sem dizer o modelo (ex.: "lente da câmera", "bateria"), pergunte só "Qual o modelo do celular?". Quando ele responder o modelo, consulte a peça que ele pediu antes, não a tela.
+- "Flex dock", "flex da dock" e "flex do doc" também são o conector de carga (tipo conector), nunca o sensor flex.
+- Palavras como "normal", "comum", "simples" não fazem parte do cadastro: ignore-as na consulta (ex.: "tela oled normal iphone 12" = consulte "iphone 12"). Nunca diga que não temos sem consultar só pelo modelo.
 - "Flex de carga", "placa de carga", "plaquinha de carga" e "sub placa" são o conector de carga (tipo conector).
 - Se a mensagem completa a anterior (ex.: "sem aro", "com aro", "a de 89", "tem?"), use o modelo e a peça que já apareceram na conversa e consulte com eles.
 - Só use consultar_estoque com o nome de uma peça ou de um modelo de celular. Se a mensagem não cita peça nem modelo e não dá para tirar da conversa (ex.: "ok", "manda rápido", "cadê a minha?", "já saiu?", cobrança de pedido), NUNCA diga que não temos a peça: chame o atendente humano.
@@ -255,11 +257,11 @@ async function buscarEstoque(busca, tipo, env) {
   // "bateria" / "tela da bateria": procura bateria (so procura tela se pediu tela de verdade)
   { const semTB = ctx.replace(/(TELA|DISPLAY) (DA|DE|DO) BATERIA/g, "BATERIA");
     if (/(^| )BATERIA/.test(semTB) && !/(^| )(TELA|DISPLAY|FRONTAL|LCD)( |$)/.test(semTB) && (!tipo || /TELA|TODOS|DISPLAY|FRONTAL/.test(normalizar(tipo)))) { tipo = "bateria"; busca = normalizar(busca).replace(/(^| )(TELA|DISPLAY|FRONTAL|LCD|BATERIA|DA|DE|DO)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca; } }
-  if (/(FLEX|PLACA|PLAQUINHA)( DE)? CARGA|PLAQUINHA|SUB ?PLACA/.test(ctx) && (!tipo || /FLEX|PLACA|PLAQUINHA|CARGA|TODOS/.test(normalizar(tipo)))) {
+  if (/(FLEX|PLACA|PLAQUINHA)( DE)? CARGA|FLEX (DA |DE |DO )?(DOCK|DOC|DOK)|PLAQUINHA|SUB ?PLACA/.test(ctx) && (!tipo || /FLEX|PLACA|PLAQUINHA|CARGA|TODOS/.test(normalizar(tipo)))) {
     tipo = "conector";
-    busca = normalizar(busca).replace(/(^| )(FLEX|PLACA|PLAQUINHA|SUB|DE|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca;
+    busca = normalizar(busca).replace(/(^| )(FLEX|PLACA|PLAQUINHA|SUB|DE|DA|DO|CARGA|DOCK|DOC|DOK)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca;
   }
-  if (/(^| )(FLEX DE CARGA|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)( |$)/.test(nb)) { tipo = "conector"; busca = nb.replace(/(^| )(FLEX DE CARGA|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)(?= |$)/g, " ").replace(/\s+/g, " ").trim(); }
+  if (/(^| )(FLEX DE CARGA|FLEX (DA |DE |DO )?(DOCK|DOC|DOK)|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)( |$)/.test(nb)) { tipo = "conector"; busca = nb.replace(/(^| )(FLEX DE CARGA|FLEX (DA |DE |DO )?(DOCK|DOC|DOK)|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)(?= |$)/g, " ").replace(/\s+/g, " ").trim(); }
   if (/(^| )(TELA|DISPLAY|LCD|FRONTAL)( |$)/.test(normalizar(busca))) { if (!tipo || tipo === "todos") tipo = "tela"; busca = normalizar(busca).replace(/(^| )(TELA|DISPLAY|LCD|FRONTAL)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca; }
   if (filtroAro) busca = normalizar(busca).replace(/(^| )(SEM ARO|COM ARO|S\/ARO|C\/ARO)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
   // Preferencia: usar a ponte que ja esta no ar (binding de servico PONTE + segredo PONTE_CHAVE)
@@ -629,7 +631,9 @@ function acharPedido(hist, texto) {
   const N = (l) => normalizar(l);
   let cand = linhas;
   const precos = [...t.matchAll(/(^|[^A-Z0-9])(\d{2,4})(,\d{2})?(?=[^A-Z0-9]|$)/g)].map((m) => m[2]);
-  for (const p of precos) { const f = cand.filter((l) => new RegExp("R\\$ " + p + ",").test(l)); if (f.length) { cand = f; break; } }
+  let achouPreco = false;
+  for (const p of precos) { const f = cand.filter((l) => new RegExp("R\\$ " + p + ",").test(l)); if (f.length) { cand = f; achouPreco = true; break; } }
+  if (precos.length && !achouPreco) return null; // numero que nao e preco da lista ("tela note 11") e modelo, nao escolha
   const chaves = [["SEM ARO", "S/ARO"], ["S/ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["C/ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["PREMIUM", "PREMIUM"], ["ORIGINAL", "ORIGINAL"], ["DIAMONDS", "DIAMONDS"], ["JK", "JK"], ["BRANCA", "BRANCA"], ["PRETA", "PRETA"], ["PRETO", "PRETO"]];
   for (const [k, v] of chaves) {
     if (!new RegExp("(^| )" + k.replace("/", "\\/") + "( |$)").test(t)) continue;
