@@ -393,11 +393,16 @@ async function salvarHistorico(env, tel, hist) {
   while (curto.length && curto[0].role !== "user") curto.shift();
   await env.MEMORIA.put("hist:" + tel, JSON.stringify(curto), { expirationTtl: HISTORICO_TTL });
 }
-async function estaPausado(env, tel) {
-  return (await env.MEMORIA.get("pausa:" + tel)) !== null;
+// Depois de "Pedido anotado" a pausa e "pedido": se o cliente pedir outra peca, o robo volta a responder
+// (pausa de humano = "1" continua deixando o robo quieto)
+async function estaPausado(env, tel, texto) {
+  const v = await env.MEMORIA.get("pausa:" + tel);
+  if (v === null) return false;
+  if (v === "pedido" && texto) { const n = normalizar(texto); if (PEDIDO.test(n) || FALA_DE_PECA.test(n) || /(^|[^A-Z])(NOTE|IPHONE|SAM|MOTO|REDMI|POCO|REALME|INFINIX|LG)([^A-Z]|$)|[A-Z]\d|\d[A-Z]/.test(n)) return false; }
+  return true;
 }
-async function pausar(env, tel) {
-  await env.MEMORIA.put("pausa:" + tel, "1", { expirationTtl: PAUSA_TTL });
+async function pausar(env, tel, tipo) {
+  await env.MEMORIA.put("pausa:" + tel, tipo || "1", { expirationTtl: PAUSA_TTL });
 }
 async function despausar(env, tel) {
   await env.MEMORIA.delete("pausa:" + tel);
@@ -584,6 +589,7 @@ const CAPINHA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS)([^A-Z]|$)/;
 const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
 // Duvida tecnica sobre a peca: so o atendente sabe responder (a IA so repetia a lista)
 const FERRAMENTA = /(^|[^A-Z])(JOGO DE CHAVES?|KIT DE CHAVES?|CHAVES? DE FENDA|CHAVE PHILIPS|FERRAMENTAS?|PINCA|ESTILETE|ALICATE)([^A-Z]|$)/;
+const BIOMETRIA = /(^|[^A-Z])(DIGITAL|BIOMETRIA|LEITOR DE DIGITAL)([^A-Z]|$)/;
 const DUVIDA_PECA = /(^|[^A-Z])(MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
 // Pedido: o robo confirma a peca escolhida (com o modelo) e passa para o atendente com a bolinha
 const PEDIDO = /(^|[^A-Z])(SEPARA|SEPARAR|TRAZ|TRAZER|MANDA|MANDE|ENVIA|ENVIE|PODE MANDAR|PODE TRAZER|PODE SEPARAR|PODE ENVIAR|VOU QUERER|VOU LEVAR|QUERO ESSA|QUERO ESSE|QUERO UMA|QUERO UM|FECHA|FECHADO|VOU FICAR|FICO COM|PODE SER|ESSA MESMO|ESSE MESMO)([^A-Z]|$)/;
@@ -697,7 +703,7 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
   }
   await enviar(env, tel, "🔴 " + resposta);
   await registrar(env, tel, "robo", resposta);
-  await pausar(env, tel);
+  await pausar(env, tel, "pedido");
   await estado(env, tel, { aguardando: 1, motivo: ("Pedido: " + textoCliente).slice(0, 120), pausa_ate: Date.now() + PAUSA_TTL * 1000 });
 }
 
@@ -808,7 +814,7 @@ const SO_SAUDACAO = /^((OI|OLA|OPA|EAI|E AI|BOM DIA|BOA TARDE|BOA NOITE|TUDO BEM
 const SO_OK = /^((OK|OKAY|OKK|OBRIGADO|OBRIGADA|OBG|BRIGADO|VALEU|VLW|SHOW|BELEZA|BLZ|TMJ|PODE DEIXAR|PO DEIXAR|TA BOM|TABOM|CERTO|JOIA|BELEZA ENTAO|BLZ ENTAO|OK OBRIGADO|DE NADA|AMEM|TOP|PERFEITO|FECHOU|BOA)[ ,!?.]*)+$/;
 
 async function mensagemDoCliente(env, tel, texto, enviar) {
-  if (await estaPausado(env, tel)) return;
+  if (await estaPausado(env, tel, texto)) return;
   if (await bloqueado(env, tel)) return; // lista de bloqueados do painel
   if (!(await roboLigado(env))) { await avisoRoboDesligado(env, tel, enviar); return; } // chave geral do painel (avisa 1x se a loja esta fechada)
   // Guarda a mensagem e espera: se o cliente mandar outra, so a ultima responde (com todas juntas)
@@ -821,7 +827,7 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   const aindaUltimo = async () => env.KVFALHOU || (await env.MEMORIA.get("ultimo:" + tel)) === marca;
   if (!(await aindaUltimo())) return; // chegou outra depois
   const todas = (await env.MEMORIA.get("pend:" + tel, "json")) || [texto];
-  if (await estaPausado(env, tel)) return;
+  if (await estaPausado(env, tel, todas.join(" "))) return;
   const junto = normalizar(todas.join(" "));
   const textoTodo = todas.join("\n");
   if (SO_SAUDACAO.test(junto.replace(/[^A-Z ,!?.]/g, " ").replace(/\s+/g, " ").trim())) {
@@ -878,6 +884,11 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
     await enviar(env, tel, resp);
     await registrar(env, tel, "robo", resp);
     return;
+  }
+  // Digital/biometria (peca separada da tela): mesmo citando o modelo, vai para o atendente
+  if (!ehPedido && BIOMETRIA.test(junto)) {
+    await env.MEMORIA.delete("pend:" + tel);
+    await passarParaHumano(env, tel, textoTodo, enviar); return;
   }
   // Duvida sobre a peca ("qual a marca da oled?", "tem diamonds?", "as duas sao oled?", "calibra?"), sem citar modelo: vai para o atendente
   if (!ehPedido && DUVIDA_PECA.test(junto) && !junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w))) {
