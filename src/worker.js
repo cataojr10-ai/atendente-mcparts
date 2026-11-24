@@ -267,6 +267,7 @@ async function buscarEstoque(busca, tipo, env) {
   // Preferencia: usar a ponte que ja esta no ar (binding de servico PONTE + segredo PONTE_CHAVE)
   // tira palavras que nao sao do cadastro ("valor", "tem", "bom dia") e "Redmi Note" vira "Note"
   // "4 G" -> "4G"; "S24ULTRA" -> "S24 ULTRA"
+  busca = normalizar(busca).replace(/(^| )(MI|NOTE|POCO|REDMI)(\d+)(SE|LITE)?(?= |$)/g, (m, e, k, n, v) => e + k + " " + n + (v ? " " + v : "")); // "MI9SE" -> "MI 9 SE"
   busca = normalizar(busca).replace(/(^| )([45]) G(?= |$)/g, "$1$2G").replace(/([A-Z]\d+)(ULTRA|PLUS|PRO|MAX|LITE|FE|PLAY|POWER|NEO)(?= |$)/g, "$1 $2");
   { const limpa = normalizar(busca).replace(/(^| )REDMI NOTE(?= )/g, " NOTE").split(" ").filter((w) => w && !SEM_PECA.has(w)).join(" "); if (limpa) busca = limpa; }
   if (env.PONTE && env.PONTE_CHAVE) {
@@ -591,7 +592,7 @@ const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
 // Duvida tecnica sobre a peca: so o atendente sabe responder (a IA so repetia a lista)
 const FERRAMENTA = /(^|[^A-Z])(JOGO DE CHAVES?|KIT DE CHAVES?|CHAVES? DE FENDA|CHAVE PHILIPS|FERRAMENTAS?|PINCA|ESTILETE|ALICATE)([^A-Z]|$)/;
 const BIOMETRIA = /(^|[^A-Z])(DIGITAL|BIOMETRIA|LEITOR DE DIGITAL)([^A-Z]|$)/;
-const DUVIDA_PECA = /(^|[^A-Z])(MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
+const DUVIDA_PECA = /(^|[^A-Z])(POR GERACAO|CADA GERACAO|MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
 // Pedido: o robo confirma a peca escolhida (com o modelo) e passa para o atendente com a bolinha
 const PEDIDO = /(^|[^A-Z])(SEPARA|SEPARAR|TRAZ|TRAZER|MANDA|MANDE|ENVIA|ENVIE|PODE MANDAR|PODE TRAZER|PODE SEPARAR|PODE ENVIAR|VOU QUERER|VOU LEVAR|QUERO ESSA|QUERO ESSE|QUERO UMA|QUERO UM|FECHA|FECHADO|VOU FICAR|FICO COM|PODE SER|ESSA MESMO|ESSE MESMO)([^A-Z]|$)/;
 
@@ -876,7 +877,9 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
     } }
   // So um numero de modelo ("do 12", "e o 12", "12 pro", "tela 13"): pode ser iPhone, Redmi Note, Samsung... pergunta a marca
   { const resto = junto.replace(/(^|[^A-Z0-9])(E|O|A|DO|DA|DE|TEM|TELA|FRONTAL|DISPLAY|PRO|MAX|PLUS|MINI|VOCE|VC|ME|VE|VER|PRA|PARA|FAVOR|POR|BOM|DIA|BOA|TARDE|NOITE|ENTAO|TBM|TAMBEM|MAS|SO|UM|UMA|TA|ESTA)(?=[^A-Z0-9]|$)/g, " ").replace(/[^A-Z0-9]+/g, " ").trim();
-    if (!ehPedido && /^(\d{1,2})( \1)*$/.test(resto) && parseInt(resto, 10) >= 5 && parseInt(resto, 10) <= 19) {
+    // "14 pro max" (11 a 17) e "12 mini"/"13 mini" so existem no iPhone: nao pergunta a marca
+    const soIphone = /(^|[^A-Z0-9])(1[1-7] PRO MAX|1[23] MINI)([^A-Z0-9]|$)/.test(junto);
+    if (!ehPedido && !soIphone && /^(\d{1,2})( \1)*$/.test(resto) && parseInt(resto, 10) >= 5 && parseInt(resto, 10) <= 19) {
       await env.MEMORIA.delete("pend:" + tel);
       const resp = "Qual o modelo do celular? É iPhone, Xiaomi (Redmi/Note), Samsung ou outra marca? 😊";
       const hm = await lerHistorico(env, tel);
