@@ -616,6 +616,7 @@ function respostaPelaLista(hist, texto) {
     filtrou = true;
     cand = cand.filter((l) => new RegExp("(^|[^A-Z0-9])" + v.replace("/", "\\/") + "([^A-Z0-9]|$)").test(normalizar(l)));
   }
+  if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length && f.length < cand.length) { cand = f; filtrou = true; } }
   if (filtrou) return cand.length ? cand.join("\n") : null; // nao achou na lista: deixa buscar de novo
   if (/(^| )(TEM|QUANTO|VALOR|PRECO|DISPONIVEL)( |$|\?)/.test(t) || /^\?+$/.test(t)) return linhas.join("\n");
   return null;
@@ -675,6 +676,8 @@ function candidatosPedido(hist, texto) {
     if (!new RegExp("(^| )" + k + "( |$)").test(t)) continue;
     const f = cand.filter((l) => normalizar(l).includes(v)); if (f.length) cand = f;
   }
+  // "LCD" (sem dizer OLED) nao e OLED: tira as opcoes OLED se sobrar alguma
+  if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length) cand = f; }
   return cand.length <= 5 && pecasBatem(texto, cand) ? cand : [];
 }
 
