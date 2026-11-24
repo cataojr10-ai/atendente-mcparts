@@ -267,6 +267,7 @@ async function buscarEstoque(busca, tipo, env) {
   // Preferencia: usar a ponte que ja esta no ar (binding de servico PONTE + segredo PONTE_CHAVE)
   // tira palavras que nao sao do cadastro ("valor", "tem", "bom dia") e "Redmi Note" vira "Note"
   // "4 G" -> "4G"; "S24ULTRA" -> "S24 ULTRA"
+  busca = normalizar(busca).replace(/(^| )(MI|NOTE|POCO|REDMI)(\d+)(SE|LITE)?(?= |$)/g, (m, e, k, n, v) => e + k + " " + n + (v ? " " + v : "")); // "MI9SE" -> "MI 9 SE"
   busca = normalizar(busca).replace(/(^| )([45]) G(?= |$)/g, "$1$2G").replace(/([A-Z]\d+)(ULTRA|PLUS|PRO|MAX|LITE|FE|PLAY|POWER|NEO)(?= |$)/g, "$1 $2");
   { const limpa = normalizar(busca).replace(/(^| )REDMI NOTE(?= )/g, " NOTE").split(" ").filter((w) => w && !SEM_PECA.has(w)).join(" "); if (limpa) busca = limpa; }
   if (env.PONTE && env.PONTE_CHAVE) {
@@ -360,7 +361,8 @@ async function buscarEstoque(busca, tipo, env) {
     if (Array.isArray(j.opcoes) && !/(^| )(4G|5G)( |$)/.test(normalizar(busca))) {
       const tem = (o, v) => new RegExp("(^|[^A-Z0-9])" + v + "([^A-Z0-9]|$)").test(normalizar(o));
       const so5 = (o) => tem(o, "5G") && !tem(o, "4G");
-      if (j.opcoes.some((o) => tem(o, "4G")) && j.opcoes.some(so5)) {
+      // so filtra se ha opcao so 4G de verdade: "A16/A17 4G/5G" serve para os dois e nao pode esconder "A17 5G" (caso Marcellus, A17)
+      if (j.opcoes.some((o) => tem(o, "4G") && !tem(o, "5G")) && j.opcoes.some(so5)) {
         j.opcoes = j.opcoes.filter((o) => !so5(o));
         j.versao = "Mostrando só as versões 4G. Se o cliente disser que é 5G, consulte de novo com o modelo + 5G.";
       }
@@ -591,7 +593,7 @@ const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
 // Duvida tecnica sobre a peca: so o atendente sabe responder (a IA so repetia a lista)
 const FERRAMENTA = /(^|[^A-Z])(JOGO DE CHAVES?|KIT DE CHAVES?|CHAVES? DE FENDA|CHAVE PHILIPS|FERRAMENTAS?|PINCA|ESTILETE|ALICATE)([^A-Z]|$)/;
 const BIOMETRIA = /(^|[^A-Z])(DIGITAL|BIOMETRIA|LEITOR DE DIGITAL)([^A-Z]|$)/;
-const DUVIDA_PECA = /(^|[^A-Z])(MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
+const DUVIDA_PECA = /(^|[^A-Z])(POR GERACAO|CADA GERACAO|MARCA|QUALIDADE|DIFERENCA|CALIBRA|CALIBRAR|GENUINA|BIOMETRIA|DIGITAL|AMBOS|AMBAS|ABOS|AS DUAS|OS DOIS|DIAMOND|DIAMONDS|PRESTA)([^A-Z]|$)/;
 // Pedido: o robo confirma a peca escolhida (com o modelo) e passa para o atendente com a bolinha
 const PEDIDO = /(^|[^A-Z])(SEPARA|SEPARAR|TRAZ|TRAZER|MANDA|MANDE|ENVIA|ENVIE|PODE MANDAR|PODE TRAZER|PODE SEPARAR|PODE ENVIAR|VOU QUERER|VOU LEVAR|QUERO ESSA|QUERO ESSE|QUERO UMA|QUERO UM|FECHA|FECHADO|VOU FICAR|FICO COM|PODE SER|ESSA MESMO|ESSE MESMO)([^A-Z]|$)/;
 
@@ -681,6 +683,20 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
   const fim = fora ? "\n\nAssim que abrirmos, um atendente confirma e já separa 😊" : "";
   let resposta = "";
   const achou = acharPedido(await lerHistorico(env, tel), textoCliente);
+  // Numero solto que nao e preco da lista nem modelo de iPhone ("bateria 98", audio mal entendido de "note 8"):
+  // nao assume a ultima lista (era outro modelo). Anota e passa para o atendente conferir.
+  const ntxt = normalizar(textoCliente);
+  const numsSoltos = [...ntxt.matchAll(/(^|[^A-Z0-9])(\d{2,4})(?=[^A-Z0-9]|$)/g)].map((m) => parseInt(m[2], 10)).filter((n) => n >= 20);
+  const semModelo = !ntxt.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w));
+  const histTxt = (await lerHistorico(env, tel)).slice(-8).map((m) => String(m.content || "")).join("\n");
+  if (!achou && numsSoltos.length && semModelo && PECAS_TXT.some(([re]) => re.test(ntxt)) && numsSoltos.every((n) => !new RegExp("R\\$ " + n + ",").test(histTxt))) {
+    const resp0 = "Pedido anotado! Um atendente já confirma qual é o modelo 😊" + fim;
+    await enviar(env, tel, "🔴 " + resp0);
+    await registrar(env, tel, "robo", resp0);
+    await pausar(env, tel, "pedido");
+    await estado(env, tel, { aguardando: 1, motivo: ("Pedido (modelo incerto): " + textoCliente).slice(0, 120), pausa_ate: Date.now() + PAUSA_TTL * 1000 });
+    return;
+  }
   if (achou) {
     const m = achou.match(/^(.*) - (R\$ [\d.,]+)$/);
     resposta = "Pedido anotado: *" + (m ? m[1] : achou) + "* - " + (m ? m[2] : "") + fim;
@@ -694,7 +710,7 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
     await salvarHistorico(env, tel, hist);
   } else {
     let r; try { r = await responder(env, tel, textoCliente,
-      "(Instrução do sistema, vale mais que as outras regras: isto é um pedido. Responda SOMENTE confirmando a peça escolhida com o modelo e o preço, no formato \"Pedido anotado: *NOME DA PEÇA* - R$ 0,00\" (uma linha por peça), mesmo fora do horário. Não use a frase padrão de passar para o atendente. Use a lista que já está na conversa; se o cliente escolheu pelo preço, ache a peça com esse preço. Se a peça não apareceu na conversa, consulte o estoque e confirme a que ele pediu. Não diga que não temos uma peça que apareceu na conversa.)"); } catch (e) { console.log("erro: Claude falhou (pedido)", e && e.message); r = { texto: "" }; }
+      "(Instrução do sistema, vale mais que as outras regras: isto é um pedido. Responda SOMENTE confirmando a peça escolhida com o modelo e o preço, no formato \"Pedido anotado: *NOME DA PEÇA* - R$ 0,00\" (uma linha por peça), mesmo fora do horário. Não use a frase padrão de passar para o atendente. Use a lista que já está na conversa; se o cliente escolheu pelo preço, ache a peça com esse preço. Se a peça não apareceu na conversa, consulte o estoque e confirme a que ele pediu. Não diga que não temos uma peça que apareceu na conversa. JK, VIVID, INCELL, OLED e DIAMONDS são qualidades de TELA (FRONTAL): se o cliente falou só isso com o modelo (ex.: \"manda uma Jk do 13 pro max\"), confirme a TELA daquele modelo e nunca auricular, flex ou outra peça.)"); } catch (e) { console.log("erro: Claude falhou (pedido)", e && e.message); r = { texto: "" }; }
     const tx = String(r.texto || "");
     const linhas = tx.split("\n").map((l) => l.trim()).filter((l) => /R\$ \d/.test(l));
     if (/pedido anotado/i.test(tx)) resposta = arrumarPedido(tx.split("\n").map((l) => l.trim()).filter((l) => /pedido anotado|R\$ \d/i.test(l)).join("\n"));
@@ -876,7 +892,9 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
     } }
   // So um numero de modelo ("do 12", "e o 12", "12 pro", "tela 13"): pode ser iPhone, Redmi Note, Samsung... pergunta a marca
   { const resto = junto.replace(/(^|[^A-Z0-9])(E|O|A|DO|DA|DE|TEM|TELA|FRONTAL|DISPLAY|PRO|MAX|PLUS|MINI|VOCE|VC|ME|VE|VER|PRA|PARA|FAVOR|POR|BOM|DIA|BOA|TARDE|NOITE|ENTAO|TBM|TAMBEM|MAS|SO|UM|UMA|TA|ESTA)(?=[^A-Z0-9]|$)/g, " ").replace(/[^A-Z0-9]+/g, " ").trim();
-    if (!ehPedido && /^(\d{1,2})( \1)*$/.test(resto) && parseInt(resto, 10) >= 5 && parseInt(resto, 10) <= 19) {
+    // "14 pro max" (11 a 17) e "12 mini"/"13 mini" so existem no iPhone: nao pergunta a marca
+    const soIphone = /(^|[^A-Z0-9])(1[1-7] PRO MAX|1[23] MINI)([^A-Z0-9]|$)/.test(junto);
+    if (!ehPedido && !soIphone && /^(\d{1,2})( \1)*$/.test(resto) && parseInt(resto, 10) >= 5 && parseInt(resto, 10) <= 19) {
       await env.MEMORIA.delete("pend:" + tel);
       const resp = "Qual o modelo do celular? É iPhone, Xiaomi (Redmi/Note), Samsung ou outra marca? 😊";
       const hm = await lerHistorico(env, tel);
