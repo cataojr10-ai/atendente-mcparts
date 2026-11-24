@@ -682,6 +682,20 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
   const fim = fora ? "\n\nAssim que abrirmos, um atendente confirma e já separa 😊" : "";
   let resposta = "";
   const achou = acharPedido(await lerHistorico(env, tel), textoCliente);
+  // Numero solto que nao e preco da lista nem modelo de iPhone ("bateria 98", audio mal entendido de "note 8"):
+  // nao assume a ultima lista (era outro modelo). Anota e passa para o atendente conferir.
+  const ntxt = normalizar(textoCliente);
+  const numsSoltos = [...ntxt.matchAll(/(^|[^A-Z0-9])(\d{2,4})(?=[^A-Z0-9]|$)/g)].map((m) => parseInt(m[2], 10)).filter((n) => n >= 20);
+  const semModelo = !ntxt.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w));
+  const histTxt = (await lerHistorico(env, tel)).slice(-8).map((m) => String(m.content || "")).join("\n");
+  if (!achou && numsSoltos.length && semModelo && PECAS_TXT.some(([re]) => re.test(ntxt)) && numsSoltos.every((n) => !new RegExp("R\\$ " + n + ",").test(histTxt))) {
+    const resp0 = "Pedido anotado! Um atendente já confirma qual é o modelo 😊" + fim;
+    await enviar(env, tel, "🔴 " + resp0);
+    await registrar(env, tel, "robo", resp0);
+    await pausar(env, tel, "pedido");
+    await estado(env, tel, { aguardando: 1, motivo: ("Pedido (modelo incerto): " + textoCliente).slice(0, 120), pausa_ate: Date.now() + PAUSA_TTL * 1000 });
+    return;
+  }
   if (achou) {
     const m = achou.match(/^(.*) - (R\$ [\d.,]+)$/);
     resposta = "Pedido anotado: *" + (m ? m[1] : achou) + "* - " + (m ? m[2] : "") + fim;
@@ -695,7 +709,7 @@ async function anotarPedido(env, tel, textoCliente, enviar) {
     await salvarHistorico(env, tel, hist);
   } else {
     let r; try { r = await responder(env, tel, textoCliente,
-      "(Instrução do sistema, vale mais que as outras regras: isto é um pedido. Responda SOMENTE confirmando a peça escolhida com o modelo e o preço, no formato \"Pedido anotado: *NOME DA PEÇA* - R$ 0,00\" (uma linha por peça), mesmo fora do horário. Não use a frase padrão de passar para o atendente. Use a lista que já está na conversa; se o cliente escolheu pelo preço, ache a peça com esse preço. Se a peça não apareceu na conversa, consulte o estoque e confirme a que ele pediu. Não diga que não temos uma peça que apareceu na conversa.)"); } catch (e) { console.log("erro: Claude falhou (pedido)", e && e.message); r = { texto: "" }; }
+      "(Instrução do sistema, vale mais que as outras regras: isto é um pedido. Responda SOMENTE confirmando a peça escolhida com o modelo e o preço, no formato \"Pedido anotado: *NOME DA PEÇA* - R$ 0,00\" (uma linha por peça), mesmo fora do horário. Não use a frase padrão de passar para o atendente. Use a lista que já está na conversa; se o cliente escolheu pelo preço, ache a peça com esse preço. Se a peça não apareceu na conversa, consulte o estoque e confirme a que ele pediu. Não diga que não temos uma peça que apareceu na conversa. JK, VIVID, INCELL, OLED e DIAMONDS são qualidades de TELA (FRONTAL): se o cliente falou só isso com o modelo (ex.: \"manda uma Jk do 13 pro max\"), confirme a TELA daquele modelo e nunca auricular, flex ou outra peça.)"); } catch (e) { console.log("erro: Claude falhou (pedido)", e && e.message); r = { texto: "" }; }
     const tx = String(r.texto || "");
     const linhas = tx.split("\n").map((l) => l.trim()).filter((l) => /R\$ \d/.test(l));
     if (/pedido anotado/i.test(tx)) resposta = arrumarPedido(tx.split("\n").map((l) => l.trim()).filter((l) => /pedido anotado|R\$ \d/i.test(l)).join("\n"));
