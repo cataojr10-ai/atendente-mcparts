@@ -361,7 +361,8 @@ async function buscarEstoque(busca, tipo, env) {
     if (Array.isArray(j.opcoes) && !/(^| )(4G|5G)( |$)/.test(normalizar(busca))) {
       const tem = (o, v) => new RegExp("(^|[^A-Z0-9])" + v + "([^A-Z0-9]|$)").test(normalizar(o));
       const so5 = (o) => tem(o, "5G") && !tem(o, "4G");
-      if (j.opcoes.some((o) => tem(o, "4G")) && j.opcoes.some(so5)) {
+      // so filtra se ha opcao so 4G de verdade: "A16/A17 4G/5G" serve para os dois e nao pode esconder "A17 5G" (caso Marcellus, A17)
+      if (j.opcoes.some((o) => tem(o, "4G") && !tem(o, "5G")) && j.opcoes.some(so5)) {
         j.opcoes = j.opcoes.filter((o) => !so5(o));
         j.versao = "Mostrando só as versões 4G. Se o cliente disser que é 5G, consulte de novo com o modelo + 5G.";
       }
