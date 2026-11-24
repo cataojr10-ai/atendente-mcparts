@@ -249,7 +249,7 @@ async function buscarEstoque(busca, tipo, env) {
   // "doc"/"dock"/"conector" de carga e o conector
   if (/(^| )(DOC|DOCK|DOCS|CONECTOR)( |$)/.test(normalizar(busca))) {
     tipo = "conector";
-    const semPeca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|DE|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
+    const semPeca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|FLEX|DE|DA|DO|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
     // "tem conector de carga?" sem modelo: pergunta o modelo em vez de dizer que nao tem
     if (!semPeca.split(" ").some((w) => w && !SEM_PECA.has(w) && !IGNORAR.has(w))) return { perguntar: true, mensagem: "O cliente não disse o modelo. Não diga que não temos: pergunte qual é o modelo do celular." };
     busca = semPeca;
@@ -616,6 +616,7 @@ function respostaPelaLista(hist, texto) {
     filtrou = true;
     cand = cand.filter((l) => new RegExp("(^|[^A-Z0-9])" + v.replace("/", "\\/") + "([^A-Z0-9]|$)").test(normalizar(l)));
   }
+  if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length && f.length < cand.length) { cand = f; filtrou = true; } }
   if (filtrou) return cand.length ? cand.join("\n") : null; // nao achou na lista: deixa buscar de novo
   if (/(^| )(TEM|QUANTO|VALOR|PRECO|DISPONIVEL)( |$|\?)/.test(t) || /^\?+$/.test(t)) return linhas.join("\n");
   return null;
@@ -675,6 +676,8 @@ function candidatosPedido(hist, texto) {
     if (!new RegExp("(^| )" + k + "( |$)").test(t)) continue;
     const f = cand.filter((l) => normalizar(l).includes(v)); if (f.length) cand = f;
   }
+  // "LCD" (sem dizer OLED) nao e OLED: tira as opcoes OLED se sobrar alguma
+  if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length) cand = f; }
   return cand.length <= 5 && pecasBatem(texto, cand) ? cand : [];
 }
 
