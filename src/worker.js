@@ -249,7 +249,7 @@ async function buscarEstoque(busca, tipo, env) {
   // "doc"/"dock"/"conector" de carga e o conector
   if (/(^| )(DOC|DOCK|DOCS|CONECTOR)( |$)/.test(normalizar(busca))) {
     tipo = "conector";
-    const semPeca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|FLEX|DE|DA|DO|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
+    const semPeca = normalizar(busca).replace(/(^| )(DOC|DOCK|DOCS|CONECTOR|DE|CARGA)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
     // "tem conector de carga?" sem modelo: pergunta o modelo em vez de dizer que nao tem
     if (!semPeca.split(" ").some((w) => w && !SEM_PECA.has(w) && !IGNORAR.has(w))) return { perguntar: true, mensagem: "O cliente não disse o modelo. Não diga que não temos: pergunte qual é o modelo do celular." };
     busca = semPeca;
