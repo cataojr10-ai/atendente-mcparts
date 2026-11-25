@@ -245,7 +245,8 @@ async function buscarEstoque(busca, tipo, env) {
   // lista de pecas: usa so o item da lista que fala deste modelo (para os filtros de bateria/lente/codigo)
   { const mods = normalizar(busca).split(/[^A-Z0-9]+/).filter((x) => /\d/.test(x));
     const partes = ctx.split(/\n|,|;|\/| E (?=[A-Z])/).map((s) => s.trim()).filter(Boolean);
-    if (partes.length > 1 && mods.length) { const sel = partes.filter((p) => mods.some((m) => p.split(/[^A-Z0-9]+/).includes(m))); if (sel.length) ctx = sel.join(" \n "); } }
+    if (partes.length > 1 && mods.length) { const sel = partes.filter((p) => mods.some((m) => p.split(/[^A-Z0-9]+/).includes(m))); // so estreita se as outras partes tem modelo proprio; "tela e bateria do iphone 14 plus" divide o mesmo modelo
+      if (sel.length && partes.filter((p) => !sel.includes(p)).every((p) => /\d/.test(p))) ctx = sel.join(" \n "); } }
   // "doc"/"dock"/"conector" de carga e o conector
   if (/(^| )(DOC|DOCK|DOCS|CONECTOR)( |$)/.test(normalizar(busca))) {
     tipo = "conector";
@@ -262,6 +263,14 @@ async function buscarEstoque(busca, tipo, env) {
     busca = normalizar(busca).replace(/(^| )(FLEX|PLACA|PLAQUINHA|SUB|DE|DA|DO|CARGA|DOCK|DOC|DOK)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca;
   }
   if (/(^| )(FLEX DE CARGA|FLEX (DA |DE |DO )?(DOCK|DOC|DOK)|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)( |$)/.test(nb)) { tipo = "conector"; busca = nb.replace(/(^| )(FLEX DE CARGA|FLEX (DA |DE |DO )?(DOCK|DOC|DOK)|PLACA DE CARGA|PLAQUINHA DE CARGA|PLAQUINHA|SUB ?PLACA)(?= |$)/g, " ").replace(/\s+/g, " ").trim(); }
+  // "sensor ALs", "sensor de proximidade": no cadastro e "SENSOR FLEX <modelo>". Busca SENSOR + modelo em todos os tipos
+  // ("16 PM" = 16 PRO MAX) e depois so deixa o que for sensor.
+  const querSensor = /(^| )SENSOR( |$)/.test(normalizar(tipo)) || /(^| )SENSOR( |$)/.test(nb) || (/(^| )SENSOR( |$)/.test(ctx) && !/(^| )(TELA|DISPLAY|FRONTAL|BATERIA|DOCK|DOC|TAMPA|LENTE|CAMERA|AURICULAR)( |$)/.test(ctx));
+  if (querSensor) {
+    tipo = "todos";
+    const modeloSensor = nb.replace(/(\d) ?PM(?= |$)/g, "$1 PRO MAX").replace(/(^| )(SENSOR|ALS|FLEX|DE|DA|DO|PROXIMIDADE|LUZ|DE LUZ|TELA|DISPLAY)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
+    busca = "SENSOR " + (modeloSensor || normalizar(busca).replace(/(^| )(SENSOR|ALS|FLEX|DE|DA|DO|PROXIMIDADE|LUZ)(?= |$)/g, " ").replace(/\s+/g, " ").trim());
+  }
   if (/(^| )(TELA|DISPLAY|LCD|FRONTAL)( |$)/.test(normalizar(busca))) { if (!tipo || tipo === "todos") tipo = "tela"; busca = normalizar(busca).replace(/(^| )(TELA|DISPLAY|LCD|FRONTAL)(?= |$)/g, " ").replace(/\s+/g, " ").trim() || busca; }
   if (filtroAro) busca = normalizar(busca).replace(/(^| )(SEM ARO|COM ARO|S\/ARO|C\/ARO)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
   // Preferencia: usar a ponte que ja esta no ar (binding de servico PONTE + segredo PONTE_CHAVE)
@@ -313,6 +322,11 @@ async function buscarEstoque(busca, tipo, env) {
       const naoTela = (o) => /(^|[^A-Z])(FLEX|CAMERA|LENTE|SENSOR|AURICULAR)([^A-Z]|$)/.test(normalizar(o));
       const f = j.opcoes.filter((o) => !naoTela(o));
       if (f.length) j.opcoes = f;
+    }
+    // pediu sensor: so serve sensor
+    if (/(^| )SENSOR( |$)/.test(normalizar(busca)) && Array.isArray(j.opcoes)) {
+      const fs = j.opcoes.filter((o) => /(^|[^A-Z])SENSOR([^A-Z]|$)/.test(normalizar(o)));
+      if (fs.length) j.opcoes = fs; else { delete j.opcoes; j.disponivel = false; j.mensagem = "No momento não temos esse sensor disponível."; }
     }
     // pediu lente: so serve lente (nao manda a camera inteira)
     if (/(^| )LENTE/.test(ctx) && Array.isArray(j.opcoes)) {
@@ -586,7 +600,7 @@ const PERGUNTA_VALOR = /(^|[^A-Z])(VALOR|VALORES|PRECO|PRECOS|QUANTO|QTO|QNTO|OR
 const ESPERA_MS = 12000; // junta mensagens seguidas do cliente numa resposta so
 
 // Assuntos que vao direto para o atendente (pedido, troca, defeito, entrega)
-const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGOU|APAGADA|APAGADO|QUEIMOU|QUEIMADA|QUEIMADO|NAO LIGA|NAO GERA|ERRADA|ERRADO|MANDOU|MANDARAM|ENVIOU|SAIU|CHEGOU|CADE|AGUARDO|JA FOI|FERIADO|VAI ABRIR|VAO ABRIR|VAI FUNCIONAR|VAO FUNCIONAR|VAO ATENDER|VAI ATENDER|AMANHA (VOCES |VCS |VC )?(ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|AMANHA)( E [A-Z]+)? (ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|NAO QUERO IA|ESSA IA|ESSE ROBO|ROBO|ROBOZINHO|FALAR COM ATENDENTE|FALAR COM ALGUEM|FALAR COM UMA PESSOA|ATENDENTE HUMANO|PESSOA DE VERDADE|DESATIVA|PIX|CHAVE PIX|QUAL CHAVE|QUAL A CHAVE|COMPROVANTE|PAGUEI|PAGAR|PAGAMENTO|BOLETO|DEVENDO|DEVO|NAO ME RESPONDEU|NAO RESPONDEU|NAO ME RESPONDE|SEM RESPOSTA|OLHA (AI|AE|DIREITO|DIREITINHO|DE NOVO|NOVAMENTE|MELHOR|BEM)|CONFERE (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|VERIFICA (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|TEM SIM|TINHA SIM)([^A-Z]|$)/;
+const PARA_HUMANO = /(^|[^A-Z])(TROCA|TROCAR|DEFEITO|DEVOLU[A-Z]*|DEVOLVER|APAGOU|APAGADA|APAGADO|QUEIMOU|QUEIMADA|QUEIMADO|NAO LIGA|NAO GERA|ERRADA|ERRADO|MANDOU|MANDARAM|ENVIOU|SAIU|CHEGOU|CADE|AGUARDO|JA FOI|FERIADO|VAI ABRIR|VAO ABRIR|VAI FUNCIONAR|VAO FUNCIONAR|VAO ATENDER|VAI ATENDER|AMANHA (VOCES |VCS |VC )?(ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|AMANHA)( E [A-Z]+)? (ABRE|ABREM|ATENDE|ATENDEM|FUNCIONA)|NAO QUERO IA|ESSA IA|ESSE ROBO|ROBO|ROBOZINHO|FALAR COM ATENDENTE|FALAR COM ALGUEM|FALAR COM UMA PESSOA|ATENDENTE HUMANO|PESSOA DE VERDADE|DESATIVA|PIX|CHAVE PIX|QUAL CHAVE|QUAL A CHAVE|COMPROVANTE|PAGUEI|PAGAR|PAGAMENTO|BOLETO|DEVENDO|DEVO|DANDO ERRO|NAO ME RESPONDEU|NAO RESPONDEU|NAO ME RESPONDE|SEM RESPOSTA|OLHA (AI|AE|DIREITO|DIREITINHO|DE NOVO|NOVAMENTE|MELHOR|BEM)|CONFERE (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|VERIFICA (AI|AE|DIREITO|DE NOVO|NOVAMENTE)|TEM SIM|TINHA SIM)([^A-Z]|$)/;
 // A loja nao vende capinha; pelicula vende junto com a tela (o atendente confere o modelo)
 const CAPINHA = /(^|[^A-Z])(CAPINHA|CAPINHAS|CAPA|CAPAS)([^A-Z]|$)/;
 const PELICULA = /(^|[^A-Z])(PELICULA|PELICULAS|PELI)([^A-Z]|$)/;
@@ -601,7 +615,7 @@ const PEDIDO = /(^|[^A-Z])(SEPARA|SEPARAR|TRAZ|TRAZER|MANDA|MANDE|ENVIA|ENVIE|PO
 function respostaPelaLista(hist, texto) {
   const ultA = [...hist].reverse().find((m) => m.role === "assistant");
   if (!ultA || typeof ultA.content !== "string" || !/- .+ - R\$ \d/.test(ultA.content)) return null; // a lista tem que ser a ultima coisa mandada
-  const t = normalizar(texto);
+  const t = normEscolha(texto);
   if (!t || t.length > 40) return null;
   if (t.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w))) return null; // citou modelo
   if (/(TELA|BATERIA|DOCK|CONECTOR|TAMPA|FLEX|LENTE|CAMERA|DISPLAY|FRONTAL|AURICULAR|CAMPAINHA|ALTO|SENSOR|PELICULA|COLA|CARGA|PLACA|IPHONE|SAMSUNG|MOTO|XIAOMI|REDMI|POCO|NOTE|REALME|LG)/.test(t)) return null;
@@ -609,7 +623,7 @@ function respostaPelaLista(hist, texto) {
   if (!listas.length) return null;
   const linhas = listas[listas.length - 1].content.split("\n").map((l) => l.trim()).filter((l) => /^- .+ - R\$ [\d.,]+$/.test(l));
   if (!linhas.length) return null;
-  const chaves = [["SEM ARO", "S/ARO"], ["S/ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["C/ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["PREMIUM", "PREMIUM"], ["ORIGINAL", "ORIGINAL"], ["JK", "JK"], ["4G", "4G"], ["5G", "5G"]];
+  const chaves = [["SEM ARO", "S/ARO"], ["S/ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["C/ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["ORI", "ORI CHINA"], ["PREMIUM", "PREMIUM"], ["ORIGINAL", "ORIGINAL"], ["JK", "JK"], ["4G", "4G"], ["5G", "5G"]];
   let cand = linhas, filtrou = false;
   for (const [k, v] of chaves) {
     if (!new RegExp("(^| )" + k.replace("/", "\\/") + "( |$|\\?)").test(t)) continue;
@@ -617,6 +631,9 @@ function respostaPelaLista(hist, texto) {
     cand = cand.filter((l) => new RegExp("(^|[^A-Z0-9])" + v.replace("/", "\\/") + "([^A-Z0-9]|$)").test(normalizar(l)));
   }
   if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length && f.length < cand.length) { cand = f; filtrou = true; } }
+  // Cor ("tem branca?") que nao esta na lista: diz que nessa cor nao tem e mostra o que tem (antes mandava so a lista, parecendo que tinha)
+  const mCor = t.match(/(^| )(BRANC|PRET|AZUL|ROX|VERDE|ROSA|DOURAD|PRATA|VERMELH|GRAFITE|CINZA|LILAS)[AO]?( |$|\?)/);
+  if (!filtrou && mCor) { const fc = linhas.filter((l) => normalizar(l).includes(mCor[2])); return fc.length ? fc.join("\n") : "Nessa cor não temos, só estas:\n" + linhas.join("\n"); }
   if (filtrou) return cand.length ? cand.join("\n") : null; // nao achou na lista: deixa buscar de novo
   if (/(^| )(TEM|QUANTO|VALOR|PRECO|DISPONIVEL)( |$|\?)/.test(t) || /^\?+$/.test(t)) return linhas.join("\n");
   return null;
@@ -631,20 +648,31 @@ function pecasBatem(texto, linhas) {
   if (citadas.length >= 2) return false; // pediu mais de uma peca: deixa o Claude montar
   return citadas.every(([, alvo]) => linhas.every((l) => alvo.test(normalizar(l))));
 }
+// Modelo com a marca separada do numero ("note 8", "iphone 11", "poco x3"): a linha da lista tem que ser desse modelo
+function modelosComMarca(t) {
+  const out = [];
+  for (const m of t.matchAll(/(^| )(NOTE|REDMI|POCO|MI|IPHONE|IP|REALME|INFINIX) ([A-Z]?\d{1,2}[A-Z]?)(?= |$)/g)) out.push([m[2] === "IP" ? "IPHONE" : m[2], m[3]]);
+  return out;
+}
+function linhaTemModelo(linha, mm) {
+  return new RegExp("(^|[^A-Z0-9])" + mm[0] + " " + mm[1] + "([^0-9]|$)").test(normalizar(linha));
+}
+// erro de digitacao comum: "incel" = INCELL
+function normEscolha(texto) { return normalizar(texto).replace(/(^| )INCEL(?= |$)/g, "$1INCELL"); }
 function acharPedido(hist, texto) {
   hist = hist.slice(-8); // so listas recentes
   const listas = hist.filter((m) => m.role === "assistant" && typeof m.content === "string" && /- .+ - R\$ \d/.test(m.content));
   if (!listas.length) return null;
   const linhas = listas[listas.length - 1].content.split("\n").map((l) => l.trim()).filter((l) => /^- .+ - R\$ [\d.,]+$/.test(l));
   if (!linhas.length) return null;
-  const t = normalizar(texto);
+  const t = normEscolha(texto);
   const N = (l) => normalizar(l);
   let cand = linhas;
   const precos = [...t.matchAll(/(^|[^A-Z0-9])(\d{2,4})(,\d{2})?(?=[^A-Z0-9]|$)/g)].map((m) => m[2]);
   let achouPreco = false;
   for (const p of precos) { const f = cand.filter((l) => new RegExp("R\\$ " + p + ",").test(l)); if (f.length) { cand = f; achouPreco = true; break; } }
   if (precos.length && !achouPreco) return null; // numero que nao e preco da lista ("tela note 11") e modelo, nao escolha
-  const chaves = [["SEM ARO", "S/ARO"], ["S/ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["C/ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["PREMIUM", "PREMIUM"], ["ORIGINAL", "ORIGINAL"], ["DIAMONDS", "DIAMONDS"], ["JK", "JK"], ["BRANCA", "BRANCA"], ["PRETA", "PRETA"], ["PRETO", "PRETO"]];
+  const chaves = [["SEM ARO", "S/ARO"], ["S/ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["C/ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["ORI", "ORI CHINA"], ["PREMIUM", "PREMIUM"], ["ORIGINAL", "ORIGINAL"], ["DIAMONDS", "DIAMONDS"], ["JK", "JK"], ["BRANCA", "BRANCA"], ["PRETA", "PRETA"], ["PRETO", "PRETO"]];
   for (const [k, v] of chaves) {
     if (!new RegExp("(^| )" + k.replace("/", "\\/") + "( |$)").test(t)) continue;
     const f = cand.filter((l) => N(l).includes(v));
@@ -652,7 +680,8 @@ function acharPedido(hist, texto) {
   }
   // pediu outro modelo (ex.: "manda tela do m12") que nao esta na linha: deixa para o Claude
   const modelos = t.split(/[^A-Z0-9]+/).filter((w) => /[A-Z]/.test(w) && /\d/.test(w));
-  if (cand.length === 1 && modelos.every((w) => N(cand[0]).includes(w)) && pecasBatem(texto, cand)) return cand[0].slice(2);
+  const mc = modelosComMarca(t);
+  if (cand.length === 1 && modelos.every((w) => N(cand[0]).includes(w)) && mc.every((m) => linhaTemModelo(cand[0], m)) && pecasBatem(texto, cand)) return cand[0].slice(2);
   return null;
 }
 // Quando nao da para saber qual: as linhas da ultima lista que combinam com o que o cliente disse
@@ -669,10 +698,12 @@ function candidatosPedido(hist, texto) {
   const listas = hist.filter((m) => m.role === "assistant" && typeof m.content === "string" && /- .+ - R\$ \d/.test(m.content));
   if (!listas.length) return [];
   let cand = listas[listas.length - 1].content.split("\n").map((l) => l.trim()).filter((l) => /^- .+ - R\$ [\d.,]+$/.test(l));
-  const t = normalizar(texto);
+  const t = normEscolha(texto);
   const modelos = t.split(/[^A-Z0-9]+/).filter((w) => /[A-Z]/.test(w) && /\d/.test(w));
   if (modelos.length && !cand.some((l) => modelos.every((w) => normalizar(l).includes(w)))) return [];
-  for (const [k, v] of [["SEM ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["JK", "JK"]]) {
+  const mc = modelosComMarca(t);
+  if (mc.length && !cand.some((l) => mc.every((m) => linhaTemModelo(l, m)))) return [];
+  for (const [k, v] of [["SEM ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["ORI", "ORI CHINA"], ["JK", "JK"]]) {
     if (!new RegExp("(^| )" + k + "( |$)").test(t)) continue;
     const f = cand.filter((l) => normalizar(l).includes(v)); if (f.length) cand = f;
   }
@@ -1011,7 +1042,11 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
-async function apagarZapi(env, tel, id) { try { const inst = (String(env.ZAPI_INSTANCE).match(/instances\/([A-Za-z0-9]+)/) || [0, String(env.ZAPI_INSTANCE).trim()])[1]; const r = await fetch(`https://api.z-api.io/instances/${inst}/token/${String(env.ZAPI_TOKEN).trim()}/messages?messageId=${encodeURIComponent(id)}&phone=${tel}&owner=true`, { method: "DELETE", headers: { "Client-Token": String(env.ZAPI_CLIENT_TOKEN).trim() } }); console.log("apagar", r.status); } catch (e) { console.log("apagar erro", e && e.message); } } async function transcrever(env, url) { try { const b = new Uint8Array(await (await fetch(url)).arrayBuffer()); let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); const r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: btoa(s), language: "pt" }); return String((r && r.text) || "").trim(); } catch (e) { console.log("audio erro", e && e.message); return ""; } } async function webhookZapi(body, env) {
+async function apagarZapi(env, tel, id) { try { const inst = (String(env.ZAPI_INSTANCE).match(/instances\/([A-Za-z0-9]+)/) || [0, String(env.ZAPI_INSTANCE).trim()])[1]; const r = await fetch(`https://api.z-api.io/instances/${inst}/token/${String(env.ZAPI_TOKEN).trim()}/messages?messageId=${encodeURIComponent(id)}&phone=${tel}&owner=true`, { method: "DELETE", headers: { "Client-Token": String(env.ZAPI_CLIENT_TOKEN).trim() } }); console.log("apagar", r.status); } catch (e) { console.log("apagar erro", e && e.message); } } // O whisper escreve "Cartão" para "Catão" (nome do dono) quando o cliente o chama: o robô respondia "não aceitamos cartão".
+function corrigirTranscricao(t) {
+  return String(t || "").replace(/(^|[.!?]\s+)((?:ô|ó|oh|ei|opa|fala)[, ]+)?cart[ãa]o\s*,/gi, (m, a, b) => a + (b || "") + "Catão,");
+}
+async function transcrever(env, url) { try { const b = new Uint8Array(await (await fetch(url)).arrayBuffer()); let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); const a64 = btoa(s); let r; try { r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt", initial_prompt: "Catão, M&C Parts. Tela, bateria, dock, tampa, iPhone, Xiaomi, Redmi Note, Poco, Samsung, Moto G, Realme, com aro, sem aro, Vivid, OLED, incell." }); } catch (e1) { console.log("audio sem prompt", e1 && e1.message); r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt" }); } return corrigirTranscricao(String((r && r.text) || "").trim()); } catch (e) { console.log("audio erro", e && e.message); return ""; } } async function webhookZapi(body, env) {
   if (!body || body.type !== "ReceivedCallback") return;
   if (body.isGroup || body.isNewsletter || body.broadcast || body.isStatusReply) return;
   let tel = String(body.phone || "").replace(/[^0-9]/g, ""); if (body.chatLid) { if (body.fromMe) { const real = await env.MEMORIA.get("lid:" + body.chatLid); console.log("loja", !!real, body.fromApi); if (real) tel = real; } else if (tel) await env.MEMORIA.put("lid:" + body.chatLid, tel, { expirationTtl: 60 * 60 * 24 * 30 }); }
