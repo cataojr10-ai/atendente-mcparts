@@ -291,6 +291,11 @@ async function buscarEstoque(busca, tipo, env) {
     console.log("busca", JSON.stringify(busca), tipo, !!j.disponivel);
     // "MOTO G 5G" -> "MOTO G5G", "A 15" -> "A15"
     if (!j.disponivel && /(^| )[A-Z] \d+[A-Z]?( |$)/.test(normalizar(busca))) { const b5 = normalizar(busca).replace(/(^| )([A-Z]) (\d+[A-Z]?)(?= |$)/g, "$1$2$3"); try { const j5 = await consultaPonte(b5); if (j5.disponivel) j = j5; } catch (e) {} }
+    // Moto G/E sem a marca ("G200", "G 200"): o cadastro e "MOTO G200/ EDGE 30/ S30"; "G200" sozinho as vezes nao acha (bateria G200, 26/11)
+    if (!j.disponivel && !/(^| )MOTO( |$)/.test(normalizar(busca)) && /(^| )[GE] ?\d{1,3}[A-Z]?( |$)/.test(normalizar(busca))) {
+      const bm = "MOTO " + normalizar(busca).replace(/(^| )([GE]) (\d{1,3}[A-Z]?)(?= |$)/g, "$1$2$3");
+      try { const jm = await consultaPonte(bm); if (jm.disponivel) j = jm; } catch (e) {}
+    }
     // o cadastro nem sempre tem "4G"/"5G" no nome: tenta de novo sem
     if (!j.disponivel && /(^| )(4G|5G)( |$)/.test(busca)) {
       const b2 = busca.replace(/(^| )(4G|5G)(?= |$)/g, " ").replace(/\s+/g, " ").trim();
