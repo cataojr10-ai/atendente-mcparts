@@ -1057,10 +1057,8 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   if (img) await env.MEMORIA.delete("img:" + tel);
   // 🔴 na frente: na lista do WhatsApp a loja ve quem precisa de resposta humana
   // o modelo as vezes copia a instrucao do prompt ("Se o cliente pergunta sobre entrega...") em vez de responder
-  if (/^\s*(Se|Quando|Caso) (o )?cliente/i.test(String(resposta || "")) || /Instru[çc][ãa]o do sistema/i.test(String(resposta || ""))) {
-    resposta = /entrega|bairro|cidade|frete/i.test(textoTodo) ? "Qual é o bairro? Um atendente confirma se entregamos aí. 😊" : "Ok";
-  }
-  let resp2 = String(resposta || "").replace(/um minuto,? j[áa] te respond[oe]u?\s*😊?/gi, "Ok").replace(/\n{3,}/g, "\n\n").trim() || "Ok";
+  const vazou = /^\s*(Se|Quando|Caso) (o )?cliente/i.test(String(resposta || "")) || /Instru[çc][ãa]o do sistema/i.test(String(resposta || ""));
+  let resp2 = String(vazou ? (/entrega|bairro|cidade|frete/i.test(textoTodo) ? "Qual é o bairro? Um atendente confirma se entregamos aí. 😊" : "Ok") : resposta || "").replace(/um minuto,? j[áa] te respond[oe]u?\s*😊?/gi, "Ok").replace(/\n{3,}/g, "\n\n").trim() || "Ok";
   resp2 = arrumarPedido(resp2) || "Ok";
   // "nao temos" igual ao que acabou de mandar: se o cliente pediu outro modelo, responde normal;
   // se so insistiu ("?", "olha de novo"), chama o atendente (antes ficava calado e o cliente reclamava)
