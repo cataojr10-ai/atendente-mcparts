@@ -1042,13 +1042,64 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Grupos de WhatsApp: o robo ignora TODOS, exceto os da lista (padrao: "Pedidos DGTOWN M&C"),
+// onde so responde pergunta de PRECO de peca. Lista editavel: config "grupos_permitidos" no D1
+// (nomes ou IDs separados por virgula; "nenhum" desliga). Nunca chama atendente, nunca anota pedido,
+// nunca pausa e nunca responde a mensagem da propria loja.
+// ---------------------------------------------------------------------------
+const GRUPOS_PADRAO = ["PEDIDOS DGTOWN"];
+function chaveGrupo(t) { return normalizar(t).replace(/[^A-Z0-9]+/g, " ").trim(); }
+async function gruposPermitidos(env) {
+  let lista = GRUPOS_PADRAO.join(",");
+  try { const r = await env.DB.prepare("SELECT valor FROM config WHERE chave = 'grupos_permitidos'").first(); if (r && String(r.valor || "").trim()) lista = String(r.valor); } catch (e) { console.log("grupos_permitidos", e && e.message); }
+  return lista.split(",").map(chaveGrupo).filter((x) => x && x !== "NENHUM");
+}
+async function grupoLiberado(env, candidatos) {
+  const lista = await gruposPermitidos(env);
+  const cands = candidatos.map(chaveGrupo).filter(Boolean);
+  return lista.some((g) => cands.some((c) => c.includes(g)));
+}
+const SEM_RESPOSTA_GRUPO = /SEM[ _]RESPOSTA/;
+async function mensagemDoGrupo(env, grupo, nomeGrupo, remetente, nomeRemetente, texto, enviar) {
+  try {
+    if (!texto || texto.length > 300) return;
+    if (!(await roboLigado(env))) return;
+    const junto = normalizar(texto);
+    // so pergunta de preco, de uma peca (ou modelo), e que nao seja assunto de atendente (pix, troca, defeito...)
+    if (!PERGUNTA_VALOR.test(junto)) return;
+    if (!(FALA_DE_PECA.test(junto) || junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w)))) return;
+    if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto)) return;
+    const chave = "grupo:" + String(grupo).replace(/[^0-9a-zA-Z]/g, "").slice(0, 24) + ":" + String(remetente || "x").replace(/[^0-9]/g, "").slice(-13);
+    const extra = "(Instrução do sistema: esta mensagem veio de um GRUPO de WhatsApp de pedidos, não de uma conversa privada. Responda SOMENTE se ela perguntar o preço de uma peça com o modelo claro: consulte o estoque e responda curto, no formato de sempre (opções com preço, ou 'não temos no momento'). Se não for pergunta de preço de peça, se faltar o modelo, se for conversa entre pessoas do grupo ou se precisar de atendente, responda exatamente: SEM_RESPOSTA. Nunca chame o atendente, não anote pedido e não faça perguntas.)";
+    const rr = await responder(env, chave, texto, extra);
+    const resp = String((rr && rr.texto) || "").replace(/🔴\s*/g, "").trim();
+    if (!rr || rr.chamouHumano || !resp || SEM_RESPOSTA_GRUPO.test(normalizar(resp)) || !/R\$ ?\d|NAO TEMOS/.test(normalizar(resp))) { console.log("grupo: sem resposta"); return; }
+    const nome = "👥 " + String(nomeGrupo || "Grupo").slice(0, 40) + (nomeRemetente ? " · " + String(nomeRemetente).slice(0, 30) : "");
+    await registrar(env, chave, "cliente", texto, { nome });
+    await enviar(env, grupo, resp);
+    await registrar(env, chave, "robo", resp);
+    console.log("grupo: respondeu");
+  } catch (e) { console.log("grupo erro", e && e.message); }
+}
+
 async function apagarZapi(env, tel, id) { try { const inst = (String(env.ZAPI_INSTANCE).match(/instances\/([A-Za-z0-9]+)/) || [0, String(env.ZAPI_INSTANCE).trim()])[1]; const r = await fetch(`https://api.z-api.io/instances/${inst}/token/${String(env.ZAPI_TOKEN).trim()}/messages?messageId=${encodeURIComponent(id)}&phone=${tel}&owner=true`, { method: "DELETE", headers: { "Client-Token": String(env.ZAPI_CLIENT_TOKEN).trim() } }); console.log("apagar", r.status); } catch (e) { console.log("apagar erro", e && e.message); } } // O whisper escreve "Cartão" para "Catão" (nome do dono) quando o cliente o chama: o robô respondia "não aceitamos cartão".
 function corrigirTranscricao(t) {
   return String(t || "").replace(/(^|[.!?]\s+)((?:ô|ó|oh|ei|opa|fala)[, ]+)?cart[ãa]o\s*,/gi, (m, a, b) => a + (b || "") + "Catão,");
 }
 async function transcrever(env, url) { try { const b = new Uint8Array(await (await fetch(url)).arrayBuffer()); let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); const a64 = btoa(s); let r; try { r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt", initial_prompt: "Catão, M&C Parts. Tela, bateria, dock, tampa, iPhone, Xiaomi, Redmi Note, Poco, Samsung, Moto G, Realme, com aro, sem aro, Vivid, OLED, incell." }); } catch (e1) { console.log("audio sem prompt", e1 && e1.message); r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt" }); } return corrigirTranscricao(String((r && r.text) || "").trim()); } catch (e) { console.log("audio erro", e && e.message); return ""; } } async function webhookZapi(body, env) {
   if (!body || body.type !== "ReceivedCallback") return;
-  if (body.isGroup || body.isNewsletter || body.broadcast || body.isStatusReply) return;
+  if (body.isNewsletter || body.broadcast || body.isStatusReply) return;
+  if (body.isGroup) {
+    const gid = String(body.phone || "");
+    const gnome = String(body.chatName || "");
+    console.log("zapi grupo", gid.slice(-14), gnome.slice(0, 40), !!body.fromMe);
+    if (body.fromMe || !gid || !(await grupoLiberado(env, [gid, gnome]))) return;
+    if (body.messageId && (await jaVisto(env, "visto:" + body.messageId))) return;
+    const t = body.text && body.text.message ? String(body.text.message) : "";
+    await mensagemDoGrupo(env, gid, gnome, body.participantPhone || body.participantLid || "", body.senderName || "", t, enviarZapi);
+    return;
+  }
   let tel = String(body.phone || "").replace(/[^0-9]/g, ""); if (body.chatLid) { if (body.fromMe) { const real = await env.MEMORIA.get("lid:" + body.chatLid); console.log("loja", !!real, body.fromApi); if (real) tel = real; } else if (tel) await env.MEMORIA.put("lid:" + body.chatLid, tel, { expirationTtl: 60 * 60 * 24 * 30 }); }
   if (!tel) return;
   const id = body.messageId || "";
@@ -1125,7 +1176,21 @@ async function webhookOmni(body, env) {
   if (env.OMNI_CHANNEL && m.channel_id && m.channel_id !== String(env.OMNI_CHANNEL).trim()) return;
   const itens = [].concat(m.contents || [], m.attachments || []);
   if (!itens.length || itens.some((c) => c && c.type === "MessageStatusCallback")) return;
-  if (itens.some((c) => c && c.internal_information && c.internal_information.group_id)) return; // grupos
+  const infoGrupo = (itens.find((c) => c && c.internal_information && c.internal_information.group_id) || {}).internal_information;
+  if (infoGrupo) { // grupos: so os liberados em grupos_permitidos (padrao Pedidos DGTOWN M&C), so pergunta de preco
+    const gid = String(infoGrupo.group_id || "");
+    const nomes = Object.keys(infoGrupo).filter((k) => typeof infoGrupo[k] === "string" && k !== "chat_lid").map((k) => infoGrupo[k]);
+    const gm = m || {};
+    const outros = [gm.recipient && gm.recipient.name, gm.group_name, gm.chat_name, gm.conversation && gm.conversation.name].filter((x) => typeof x === "string");
+    console.log("omni grupo", JSON.stringify({ g: gid.slice(-20), chaves: Object.keys(infoGrupo).slice(0, 10), nomes: nomes.concat(outros).map((x) => String(x).slice(0, 40)).slice(0, 6), fm: !!gm.metadata.from_me }));
+    if (gm.metadata.from_me || !(await grupoLiberado(env, [gid].concat(nomes, outros)))) return;
+    const idg = gm._id || "";
+    if (idg && (await jaVisto(env, "visto:" + idg))) return;
+    const tg = (gm.contents || []).find((c) => c && c.type === "TEXT" && c.message);
+    const nomeG = nomes.concat(outros).find((x) => /[A-Za-z]{3}/.test(x) && x !== gid) || "";
+    await mensagemDoGrupo(env, gid, nomeG, (gm.sender && gm.sender.identifier) || "", (gm.sender && gm.sender.name) || "", tg ? String(tg.message) : "", enviarOmni);
+    return;
+  }
   const id = m._id || "";
   if (id && (await jaVisto(env, "visto:" + id))) return;
   const t = (m.contents || []).find((c) => c && c.type === "TEXT" && c.message);
