@@ -371,6 +371,29 @@ async function buscarEstoque(busca, tipo, env) {
         else { delete j.opcoes; j.disponivel = false; j.mensagem = "No momento não temos essa peça disponível."; }
       }
     }
+    // "11 PRO MAX" nao e "11 PRO (MAX)" (MAX entre parenteses e qualidade da bateria) e "REDMI 12 PRO" nao e "REDMI 12/POCO M6 PRO":
+    // o numero do modelo tem que vir colado na versao (PRO/MAX/PLUS...), ignorando o que esta entre parenteses
+    if (Array.isArray(j.opcoes)) {
+      const tb2 = tokens(busca), seqs = [];
+      for (let i = 0; i < tb2.length; i++) if (/\d/.test(tb2[i])) { const sq = [tb2[i]]; for (let k = i + 1; k < tb2.length && ["PRO", "MAX", "PLUS", "ULTRA", "MINI", "LITE"].includes(tb2[k]); k++) sq.push(tb2[k]); if (sq.length > 1) seqs.push(sq); }
+      if (seqs.length) {
+        const tem = (o, sq) => { const tn = tokens(normalizar(o).replace(/\([^)]*\)/g, " ")); for (let i = 0; i + sq.length <= tn.length; i++) if (sq.every((x, d) => tn[i + d] === x)) return true; return false; };
+        const f = j.opcoes.filter((o) => seqs.some((sq) => tem(o, sq)));
+        if (f.length) j.opcoes = f;
+        else { delete j.opcoes; j.disponivel = false; j.mensagem = "No momento não temos essa peça disponível."; }
+      }
+    }
+    // Cor pedida na tampa ("tampa iPhone 15 branca"): so manda dessa cor; se nao tem, avisa
+    if (Array.isArray(j.opcoes) && /TAMPA|TRASEIRA/.test(normalizar(tipo) + " " + nb)) {
+      const cores = [["BRANC", "branca"], ["PRET", "preta"], ["AZUL", "azul"], ["ROX", "roxa"], ["VERDE", "verde"], ["ROSA", "rosa"], ["DOURAD", "dourada"], ["PRATA", "prata"], ["VERMELH", "vermelha"], ["GRAFIT", "grafite"], ["CINZA", "cinza"], ["LILAS", "lilás"]];
+      const ct = ctx.split(/[^A-Z]+/);
+      const pedida = cores.find(([st]) => ct.some((w) => w.startsWith(st) && w.length <= st.length + 2));
+      if (pedida) {
+        const f = j.opcoes.filter((o) => normalizar(o).includes(pedida[0]));
+        if (f.length) j.opcoes = f;
+        else j.observacao = "Não temos nessa cor (" + pedida[1] + "). Diga isso ao cliente (ex.: \"Nessa cor não temos, só estas:\") e mostre estas opções exatamente como vieram.";
+      }
+    }
     // Modelo com 4G e 5G e o cliente nao disse qual: manda so as 4G
     if (Array.isArray(j.opcoes) && !/(^| )(4G|5G)( |$)/.test(normalizar(busca))) {
       const tem = (o, v) => new RegExp("(^|[^A-Z0-9])" + v + "([^A-Z0-9]|$)").test(normalizar(o));
@@ -618,6 +641,9 @@ function respostaPelaLista(hist, texto) {
   const t = normEscolha(texto);
   if (!t || t.length > 40) return null;
   if (t.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w))) return null; // citou modelo
+  // "e a do 12 pro max sai a quanto?" depois da lista do 12: e outro modelo, nao a mesma lista (caso Dr Apple 26/11)
+  { const precosLista = (hist.filter((m) => m.role === "assistant" && typeof m.content === "string").pop() || { content: "" }).content;
+    if (/(^| )(PRO|MAX|PLUS|MINI|ULTRA|LITE|FE)( |$)/.test(t) || t.split(/[^A-Z0-9]+/).some((w) => /^\d{1,4}$/.test(w) && !new RegExp("R\\$ " + w + ",").test(precosLista))) return null; }
   if (/(TELA|BATERIA|DOCK|CONECTOR|TAMPA|FLEX|LENTE|CAMERA|DISPLAY|FRONTAL|AURICULAR|CAMPAINHA|ALTO|SENSOR|PELICULA|COLA|CARGA|PLACA|IPHONE|SAMSUNG|MOTO|XIAOMI|REDMI|POCO|NOTE|REALME|LG)/.test(t)) return null;
   const listas = hist.filter((m) => m.role === "assistant" && typeof m.content === "string" && /- .+ - R\$ \d/.test(m.content));
   if (!listas.length) return null;
@@ -658,7 +684,7 @@ function linhaTemModelo(linha, mm) {
   return new RegExp("(^|[^A-Z0-9])" + mm[0] + " " + mm[1] + "([^0-9]|$)").test(normalizar(linha));
 }
 // erro de digitacao comum: "incel" = INCELL
-function normEscolha(texto) { return normalizar(texto).replace(/(^| )INCEL(?= |$)/g, "$1INCELL"); }
+function normEscolha(texto) { return normalizar(texto).replace(/[()]/g, " ").replace(/\s+/g, " ").trim().replace(/(^| )INCEL(?= |$)/g, "$1INCELL"); } // "(COM ARO)" entre parenteses tambem vale
 function acharPedido(hist, texto) {
   hist = hist.slice(-8); // so listas recentes
   const listas = hist.filter((m) => m.role === "assistant" && typeof m.content === "string" && /- .+ - R\$ \d/.test(m.content));
@@ -706,9 +732,11 @@ function candidatosPedido(hist, texto) {
   for (const [k, v] of [["SEM ARO", "S/ARO"], ["COM ARO", "C/ARO"], ["VIVID", "VIVID"], ["INCELL", "INCELL"], ["OLED", "OLED"], ["CHINA", "CHINA"], ["ORI", "ORI CHINA"], ["JK", "JK"]]) {
     if (!new RegExp("(^| )" + k + "( |$)").test(t)) continue;
     const f = cand.filter((l) => normalizar(l).includes(v)); if (f.length) cand = f;
+    else if (!/ARO/.test(v)) return []; // pediu INCELL/OLED/VIVID... e nenhuma linha da lista tem: nao chuta (caso Jeferson 26/11), o Claude consulta
   }
   // "LCD" (sem dizer OLED) nao e OLED: tira as opcoes OLED se sobrar alguma
   if (/(^| )LCD( |$)/.test(t) && !/OLED/.test(t)) { const f = cand.filter((l) => !/OLED/.test(normalizar(l))); if (f.length) cand = f; }
+  cand = [...new Set(cand)]; // a mesma peca nao aparece duas vezes
   return cand.length <= 5 && pecasBatem(texto, cand) ? cand : [];
 }
 
@@ -879,14 +907,14 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   if (!(await roboLigado(env))) { await avisoRoboDesligado(env, tel, enviar); return; } // chave geral do painel (avisa 1x se a loja esta fechada)
   // Guarda a mensagem e espera: se o cliente mandar outra, so a ultima responde (com todas juntas)
   const marca = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-  const pend = (await env.MEMORIA.get("pend:" + tel, "json")) || [];
-  pend.push(texto);
-  await env.MEMORIA.put("pend:" + tel, JSON.stringify(pend.slice(-10)), { expirationTtl: 300 });
+  // Acrescenta de forma atomica: 3 mensagens no mesmo segundo ("Oi", pergunta, "Boa tarde") se sobrescreviam e a pergunta se perdia (caso lukinha 26/11)
+  if (env.MEMORIA.append) await env.MEMORIA.append("pend:" + tel, texto, 300);
+  else { const pend = (await env.MEMORIA.get("pend:" + tel, "json")) || []; pend.push(texto); await env.MEMORIA.put("pend:" + tel, JSON.stringify(pend.slice(-10)), { expirationTtl: 300 }); }
   await env.MEMORIA.put("ultimo:" + tel, marca, { expirationTtl: 300 });
   await new Promise((r) => setTimeout(r, ESPERA_MS));
   const aindaUltimo = async () => env.KVFALHOU || (await env.MEMORIA.get("ultimo:" + tel)) === marca;
   if (!(await aindaUltimo())) return; // chegou outra depois
-  const todas = (await env.MEMORIA.get("pend:" + tel, "json")) || [texto];
+  const todas = ((await env.MEMORIA.get("pend:" + tel, "json")) || [texto]).slice(-10);
   if (await estaPausado(env, tel, todas.join(" "))) return;
   const junto = normalizar(todas.join(" "));
   const textoTodo = todas.join("\n");
@@ -906,6 +934,24 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   // "manda o pix" / "me passa a chave": nao e pedido de peca
   const juntoSemPix = junto.replace(/(MANDA|MANDE|ENVIA|ENVIE|PASSA|PASSE)( [A-Z]+){0,3} (PIX|CHAVE)/g, " ");
   let ehPedido = PEDIDO.test(juntoSemPix) && !PERGUNTA_VALOR.test(juntoSemPix);
+  // "Manda tela" / "o Julinho chegou, o Ronaldo ta fechado": sem lista na conversa, "manda/fechado" nao e pedido de peca
+  if (ehPedido) {
+    const hl = await lerHistorico(env, tel);
+    const temLista = hl.slice(-8).some((m) => m.role === "assistant" && typeof m.content === "string" && /- .+ - R\$ \d/.test(m.content));
+    if (!temLista) {
+      const temNum = /\d/.test(junto);
+      if (!temNum && FALA_DE_PECA.test(junto)) { // pediu a peca sem dizer o modelo: pergunta
+        await env.MEMORIA.delete("pend:" + tel);
+        const resp = "Qual o modelo do celular? 😊";
+        hl.push({ role: "user", content: textoTodo }, { role: "assistant", content: resp });
+        await salvarHistorico(env, tel, hl);
+        await enviar(env, tel, resp);
+        await registrar(env, tel, "robo", resp);
+        return;
+      }
+      if (!temNum || /\?/.test(junto) || /(^| )TEM( |$)/.test(juntoSemPix)) ehPedido = !!(temNum && FALA_DE_PECA.test(junto) && !/\?/.test(junto) && !/(^| )TEM( |$)/.test(juntoSemPix));
+    }
+  }
   // so o preco da lista ("110", "com aro 95", "a de 80"): e pedido
   if (!ehPedido && junto.length <= 30 && !/\?/.test(junto) && /(^|[^A-Z0-9])\d{2,4}(,\d{2})?([^A-Z0-9]|$)/.test(junto) && !/[A-Z]\d|\d[A-Z]/.test(junto) && acharPedido(await lerHistorico(env, tel), textoTodo)) ehPedido = true;
   // foto sem pergunta de preco (reclamacao, comprovante, "nao sao nossas"): vai para o atendente
@@ -1010,7 +1056,9 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
   await env.MEMORIA.delete("pend:" + tel);
   if (img) await env.MEMORIA.delete("img:" + tel);
   // 🔴 na frente: na lista do WhatsApp a loja ve quem precisa de resposta humana
-  let resp2 = String(resposta || "").replace(/um minuto,? j[áa] te respond[oe]u?\s*😊?/gi, "Ok").replace(/\n{3,}/g, "\n\n").trim() || "Ok";
+  // o modelo as vezes copia a instrucao do prompt ("Se o cliente pergunta sobre entrega...") em vez de responder
+  const vazou = /^\s*(Se|Quando|Caso) (o )?cliente/i.test(String(resposta || "")) || /Instru[çc][ãa]o do sistema/i.test(String(resposta || ""));
+  let resp2 = String(vazou ? (/entrega|bairro|cidade|frete/i.test(textoTodo) ? "Qual é o bairro? Um atendente confirma se entregamos aí. 😊" : "Ok") : resposta || "").replace(/um minuto,? j[áa] te respond[oe]u?\s*😊?/gi, "Ok").replace(/\n{3,}/g, "\n\n").trim() || "Ok";
   resp2 = arrumarPedido(resp2) || "Ok";
   // "nao temos" igual ao que acabou de mandar: se o cliente pediu outro modelo, responde normal;
   // se so insistiu ("?", "olha de novo"), chama o atendente (antes ficava calado e o cliente reclamava)
@@ -1042,13 +1090,64 @@ async function mensagemDoCliente(env, tel, texto, enviar) {
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Grupos de WhatsApp: o robo ignora TODOS, exceto os da lista (padrao: "Pedidos DGTOWN M&C"),
+// onde so responde pergunta de PRECO de peca. Lista editavel: config "grupos_permitidos" no D1
+// (nomes ou IDs separados por virgula; "nenhum" desliga). Nunca chama atendente, nunca anota pedido,
+// nunca pausa e nunca responde a mensagem da propria loja.
+// ---------------------------------------------------------------------------
+const GRUPOS_PADRAO = ["PEDIDOS DGTOWN"];
+function chaveGrupo(t) { return normalizar(t).replace(/[^A-Z0-9]+/g, " ").trim(); }
+async function gruposPermitidos(env) {
+  let lista = GRUPOS_PADRAO.join(",");
+  try { const r = await env.DB.prepare("SELECT valor FROM config WHERE chave = 'grupos_permitidos'").first(); if (r && String(r.valor || "").trim()) lista = String(r.valor); } catch (e) { console.log("grupos_permitidos", e && e.message); }
+  return lista.split(",").map(chaveGrupo).filter((x) => x && x !== "NENHUM");
+}
+async function grupoLiberado(env, candidatos) {
+  const lista = await gruposPermitidos(env);
+  const cands = candidatos.map(chaveGrupo).filter(Boolean);
+  return lista.some((g) => cands.some((c) => c.includes(g)));
+}
+const SEM_RESPOSTA_GRUPO = /SEM[ _]RESPOSTA/;
+async function mensagemDoGrupo(env, grupo, nomeGrupo, remetente, nomeRemetente, texto, enviar) {
+  try {
+    if (!texto || texto.length > 300) return;
+    if (!(await roboLigado(env))) return;
+    const junto = normalizar(texto);
+    // so pergunta de preco, de uma peca (ou modelo), e que nao seja assunto de atendente (pix, troca, defeito...)
+    if (!PERGUNTA_VALOR.test(junto)) return;
+    if (!(FALA_DE_PECA.test(junto) || junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w)))) return;
+    if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto)) return;
+    const chave = "grupo:" + String(grupo).replace(/[^0-9a-zA-Z]/g, "").slice(0, 24) + ":" + String(remetente || "x").replace(/[^0-9]/g, "").slice(-13);
+    const extra = "(Instrução do sistema: esta mensagem veio de um GRUPO de WhatsApp de pedidos, não de uma conversa privada. Responda SOMENTE se ela perguntar o preço de uma peça com o modelo claro: consulte o estoque e responda curto, no formato de sempre (opções com preço, ou 'não temos no momento'). Se não for pergunta de preço de peça, se faltar o modelo, se for conversa entre pessoas do grupo ou se precisar de atendente, responda exatamente: SEM_RESPOSTA. Nunca chame o atendente, não anote pedido e não faça perguntas.)";
+    const rr = await responder(env, chave, texto, extra);
+    const resp = String((rr && rr.texto) || "").replace(/🔴\s*/g, "").trim();
+    if (!rr || rr.chamouHumano || !resp || SEM_RESPOSTA_GRUPO.test(normalizar(resp)) || !/R\$ ?\d|NAO TEMOS/.test(normalizar(resp))) { console.log("grupo: sem resposta"); return; }
+    const nome = "👥 " + String(nomeGrupo || "Grupo").slice(0, 40) + (nomeRemetente ? " · " + String(nomeRemetente).slice(0, 30) : "");
+    await registrar(env, chave, "cliente", texto, { nome });
+    await enviar(env, grupo, resp);
+    await registrar(env, chave, "robo", resp);
+    console.log("grupo: respondeu");
+  } catch (e) { console.log("grupo erro", e && e.message); }
+}
+
 async function apagarZapi(env, tel, id) { try { const inst = (String(env.ZAPI_INSTANCE).match(/instances\/([A-Za-z0-9]+)/) || [0, String(env.ZAPI_INSTANCE).trim()])[1]; const r = await fetch(`https://api.z-api.io/instances/${inst}/token/${String(env.ZAPI_TOKEN).trim()}/messages?messageId=${encodeURIComponent(id)}&phone=${tel}&owner=true`, { method: "DELETE", headers: { "Client-Token": String(env.ZAPI_CLIENT_TOKEN).trim() } }); console.log("apagar", r.status); } catch (e) { console.log("apagar erro", e && e.message); } } // O whisper escreve "Cartão" para "Catão" (nome do dono) quando o cliente o chama: o robô respondia "não aceitamos cartão".
 function corrigirTranscricao(t) {
   return String(t || "").replace(/(^|[.!?]\s+)((?:ô|ó|oh|ei|opa|fala)[, ]+)?cart[ãa]o\s*,/gi, (m, a, b) => a + (b || "") + "Catão,");
 }
 async function transcrever(env, url) { try { const b = new Uint8Array(await (await fetch(url)).arrayBuffer()); let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); const a64 = btoa(s); let r; try { r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt", initial_prompt: "Catão, M&C Parts. Tela, bateria, dock, tampa, iPhone, Xiaomi, Redmi Note, Poco, Samsung, Moto G, Realme, com aro, sem aro, Vivid, OLED, incell." }); } catch (e1) { console.log("audio sem prompt", e1 && e1.message); r = await env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: a64, language: "pt" }); } return corrigirTranscricao(String((r && r.text) || "").trim()); } catch (e) { console.log("audio erro", e && e.message); return ""; } } async function webhookZapi(body, env) {
   if (!body || body.type !== "ReceivedCallback") return;
-  if (body.isGroup || body.isNewsletter || body.broadcast || body.isStatusReply) return;
+  if (body.isNewsletter || body.broadcast || body.isStatusReply) return;
+  if (body.isGroup) {
+    const gid = String(body.phone || "");
+    const gnome = String(body.chatName || "");
+    console.log("zapi grupo", gid.slice(-14), gnome.slice(0, 40), !!body.fromMe);
+    if (body.fromMe || !gid || !(await grupoLiberado(env, [gid, gnome]))) return;
+    if (body.messageId && (await jaVisto(env, "visto:" + body.messageId))) return;
+    const t = body.text && body.text.message ? String(body.text.message) : "";
+    await mensagemDoGrupo(env, gid, gnome, body.participantPhone || body.participantLid || "", body.senderName || "", t, enviarZapi);
+    return;
+  }
   let tel = String(body.phone || "").replace(/[^0-9]/g, ""); if (body.chatLid) { if (body.fromMe) { const real = await env.MEMORIA.get("lid:" + body.chatLid); console.log("loja", !!real, body.fromApi); if (real) tel = real; } else if (tel) await env.MEMORIA.put("lid:" + body.chatLid, tel, { expirationTtl: 60 * 60 * 24 * 30 }); }
   if (!tel) return;
   const id = body.messageId || "";
@@ -1125,7 +1224,21 @@ async function webhookOmni(body, env) {
   if (env.OMNI_CHANNEL && m.channel_id && m.channel_id !== String(env.OMNI_CHANNEL).trim()) return;
   const itens = [].concat(m.contents || [], m.attachments || []);
   if (!itens.length || itens.some((c) => c && c.type === "MessageStatusCallback")) return;
-  if (itens.some((c) => c && c.internal_information && c.internal_information.group_id)) return; // grupos
+  const infoGrupo = (itens.find((c) => c && c.internal_information && c.internal_information.group_id) || {}).internal_information;
+  if (infoGrupo) { // grupos: so os liberados em grupos_permitidos (padrao Pedidos DGTOWN M&C), so pergunta de preco
+    const gid = String(infoGrupo.group_id || "");
+    const nomes = Object.keys(infoGrupo).filter((k) => typeof infoGrupo[k] === "string" && k !== "chat_lid").map((k) => infoGrupo[k]);
+    const gm = m || {};
+    const outros = [gm.recipient && gm.recipient.name, gm.group_name, gm.chat_name, gm.conversation && gm.conversation.name].filter((x) => typeof x === "string");
+    console.log("omni grupo", JSON.stringify({ g: gid.slice(-20), chaves: Object.keys(infoGrupo).slice(0, 10), nomes: nomes.concat(outros).map((x) => String(x).slice(0, 40)).slice(0, 6), fm: !!gm.metadata.from_me }));
+    if (gm.metadata.from_me || !(await grupoLiberado(env, [gid].concat(nomes, outros)))) return;
+    const idg = gm._id || "";
+    if (idg && (await jaVisto(env, "visto:" + idg))) return;
+    const tg = (gm.contents || []).find((c) => c && c.type === "TEXT" && c.message);
+    const nomeG = nomes.concat(outros).find((x) => /[A-Za-z]{3}/.test(x) && x !== gid) || "";
+    await mensagemDoGrupo(env, gid, nomeG, (gm.sender && gm.sender.identifier) || "", (gm.sender && gm.sender.name) || "", tg ? String(tg.message) : "", enviarOmni);
+    return;
+  }
   const id = m._id || "";
   if (id && (await jaVisto(env, "visto:" + id))) return;
   const t = (m.contents || []).find((c) => c && c.type === "TEXT" && c.message);
@@ -1238,6 +1351,13 @@ function memoriaD1(db) {
         await db.prepare("INSERT INTO kv (k, v, exp) VALUES (?1, ?2, ?3) ON CONFLICT(k) DO UPDATE SET v = ?2, exp = ?3").bind(k, String(v), Date.now() + ttl * 1000).run();
         if (Math.random() < 0.02) await db.prepare("DELETE FROM kv WHERE exp < ?").bind(Date.now()).run();
       } catch (e) { console.log("mem put", e && e.message); }
+    },
+    async append(k, item, ttl) {
+      try {
+        await prep();
+        const agora = Date.now();
+        await db.prepare("INSERT INTO kv (k, v, exp) VALUES (?1, json_array(?2), ?3) ON CONFLICT(k) DO UPDATE SET v = CASE WHEN kv.exp > ?4 THEN json_insert(kv.v, '$[#]', ?2) ELSE json_array(?2) END, exp = ?3").bind(k, String(item), agora + (ttl || 300) * 1000, agora).run();
+      } catch (e) { console.log("mem append", e && e.message); const a = (await this.get(k, "json")) || []; a.push(item); await this.put(k, JSON.stringify(a.slice(-10)), { expirationTtl: ttl || 300 }); }
     },
     async delete(k) {
       try { await prep(); await db.prepare("DELETE FROM kv WHERE k = ?").bind(k).run(); } catch (e) { console.log("mem del", e && e.message); }
