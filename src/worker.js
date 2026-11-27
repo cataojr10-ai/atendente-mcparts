@@ -1116,13 +1116,14 @@ async function grupoLiberado(env, candidatos) {
 const SEM_RESPOSTA_GRUPO = /SEM[ _]RESPOSTA/;
 async function mensagemDoGrupo(env, grupo, nomeGrupo, remetente, nomeRemetente, texto, enviar) {
   try {
-    if (!texto || texto.length > 300) return;
-    if (!(await roboLigado(env))) return;
+    const amostra = String(texto || "").replace(/\s+/g, " ").slice(0, 80);
+    if (!texto || texto.length > 300) { console.log("grupo: ignorou (sem texto ou longo)", JSON.stringify(amostra)); return; }
+    if (!(await roboLigado(env))) { console.log("grupo: ignorou (robo desligado)"); return; }
     const junto = normalizar(texto);
     // so pergunta de preco, de uma peca (ou modelo), e que nao seja assunto de atendente (pix, troca, defeito...)
-    if (!PERGUNTA_VALOR.test(junto)) return;
-    if (!(FALA_DE_PECA.test(junto) || junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w)))) return;
-    if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto)) return;
+    if (!PERGUNTA_VALOR.test(junto)) { console.log("grupo: ignorou (nao e pergunta de preco)", JSON.stringify(amostra)); return; }
+    if (!(FALA_DE_PECA.test(junto) || junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w)))) { console.log("grupo: ignorou (sem peca/modelo)", JSON.stringify(amostra)); return; }
+    if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto)) { console.log("grupo: ignorou (assunto de atendente)", JSON.stringify(amostra)); return; }
     const chave = "grupo:" + String(grupo).replace(/[^0-9a-zA-Z]/g, "").slice(0, 24) + ":" + String(remetente || "x").replace(/[^0-9]/g, "").slice(-13);
     const extra = "(Instrução do sistema: esta mensagem veio de um GRUPO de WhatsApp de pedidos, não de uma conversa privada. Responda SOMENTE se ela perguntar o preço de uma peça com o modelo claro: consulte o estoque e responda curto, no formato de sempre (opções com preço, ou 'não temos no momento'). Se não for pergunta de preço de peça, se faltar o modelo, se for conversa entre pessoas do grupo ou se precisar de atendente, responda exatamente: SEM_RESPOSTA. Nunca chame o atendente, não anote pedido e não faça perguntas.)";
     const rr = await responder(env, chave, texto, extra);
@@ -1236,9 +1237,10 @@ async function webhookOmni(body, env) {
     const gm = m || {};
     const outros = [gm.recipient && gm.recipient.name, gm.group_name, gm.chat_name, gm.conversation && gm.conversation.name].filter((x) => typeof x === "string");
     console.log("omni grupo", JSON.stringify({ g: gid.slice(-20), chaves: Object.keys(infoGrupo).slice(0, 10), nomes: nomes.concat(outros).map((x) => String(x).slice(0, 40)).slice(0, 6), fm: !!gm.metadata.from_me }));
-    if (gm.metadata.from_me || !(await grupoLiberado(env, [gid].concat(nomes, outros)))) return;
+    if (gm.metadata.from_me) { console.log("grupo: ignorou (mensagem da propria loja)"); return; }
+    if (!(await grupoLiberado(env, [gid].concat(nomes, outros)))) { console.log("grupo: ignorou (grupo nao liberado)"); return; }
     const idg = gm._id || "";
-    if (idg && (await jaVisto(env, "visto:" + idg))) return;
+    if (idg && (await jaVisto(env, "visto:" + idg))) { console.log("grupo: ignorou (ja visto)"); return; }
     const tg = (gm.contents || []).find((c) => c && c.type === "TEXT" && c.message);
     const nomeG = nomes.concat(outros).find((x) => /[A-Za-z]{3}/.test(x) && x !== gid) || "";
     await mensagemDoGrupo(env, gid, nomeG, (gm.sender && gm.sender.identifier) || "", (gm.sender && gm.sender.name) || "", tg ? String(tg.message) : "", enviarOmni);
