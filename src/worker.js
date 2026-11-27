@@ -1114,6 +1114,8 @@ async function grupoLiberado(env, candidatos) {
   return lista.some((g) => cands.some((c) => c.includes(g)));
 }
 const SEM_RESPOSTA_GRUPO = /SEM[ _]RESPOSTA/;
+// No grupo ninguem escreve "quanto custa": perguntam "conector X tem?" ou so "e display A30". Tambem vale como pedido de preco/estoque.
+const PERGUNTA_TEM_GRUPO = /(^|[^A-Z])(TEM|TEMOS|TERIA|DISPONIVEL|TEM PRA)([^A-Z]|$)/;
 async function mensagemDoGrupo(env, grupo, nomeGrupo, remetente, nomeRemetente, texto, enviar) {
   try {
     const amostra = String(texto || "").replace(/\s+/g, " ").slice(0, 80);
@@ -1121,11 +1123,11 @@ async function mensagemDoGrupo(env, grupo, nomeGrupo, remetente, nomeRemetente, 
     if (!(await roboLigado(env))) { console.log("grupo: ignorou (robo desligado)"); return; }
     const junto = normalizar(texto);
     // so pergunta de preco, de uma peca (ou modelo), e que nao seja assunto de atendente (pix, troca, defeito...)
-    if (!PERGUNTA_VALOR.test(junto)) { console.log("grupo: ignorou (nao e pergunta de preco)", JSON.stringify(amostra)); return; }
+    if (!(PERGUNTA_VALOR.test(junto) || PERGUNTA_TEM_GRUPO.test(junto) || (texto.length <= 40 && FALA_DE_PECA.test(junto)))) { console.log("grupo: ignorou (nao e pergunta de preco)", JSON.stringify(amostra)); return; }
     if (!(FALA_DE_PECA.test(junto) || junto.split(/[^A-Z0-9]+/).some((w) => /[A-Z]/.test(w) && /\d/.test(w)))) { console.log("grupo: ignorou (sem peca/modelo)", JSON.stringify(amostra)); return; }
     if (PARA_HUMANO.test(junto) || FALA_COMPROVANTE.test(junto)) { console.log("grupo: ignorou (assunto de atendente)", JSON.stringify(amostra)); return; }
     const chave = "grupo:" + String(grupo).replace(/[^0-9a-zA-Z]/g, "").slice(0, 24) + ":" + String(remetente || "x").replace(/[^0-9]/g, "").slice(-13);
-    const extra = "(Instrução do sistema: esta mensagem veio de um GRUPO de WhatsApp de pedidos, não de uma conversa privada. Responda SOMENTE se ela perguntar o preço de uma peça com o modelo claro: consulte o estoque e responda curto, no formato de sempre (opções com preço, ou 'não temos no momento'). Se não for pergunta de preço de peça, se faltar o modelo, se for conversa entre pessoas do grupo ou se precisar de atendente, responda exatamente: SEM_RESPOSTA. Nunca chame o atendente, não anote pedido e não faça perguntas.)";
+    const extra = "(Instrução do sistema: esta mensagem veio de um GRUPO de WhatsApp de pedidos, não de uma conversa privada. Responda SOMENTE se ela perguntar o preço ou se tem uma peça com o modelo claro (inclui 'conector X tem?' e mensagem curta tipo 'e display A30', que é continuação da pergunta de preço): consulte o estoque e responda curto, no formato de sempre (opções com preço, ou 'não temos no momento'). Se não for pergunta de preço de peça, se faltar o modelo, se for conversa entre pessoas do grupo ou se precisar de atendente, responda exatamente: SEM_RESPOSTA. Nunca chame o atendente, não anote pedido e não faça perguntas.)";
     const rr = await responder(env, chave, texto, extra);
     const resp = String((rr && rr.texto) || "").replace(/🔴\s*/g, "").trim();
     if (!rr || rr.chamouHumano || !resp || SEM_RESPOSTA_GRUPO.test(normalizar(resp)) || !/R\$ ?\d|NAO TEMOS/.test(normalizar(resp))) { console.log("grupo: sem resposta"); return; }
